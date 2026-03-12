@@ -1,0 +1,1400 @@
+{
+    "infer_debug": true,
+    "print_fps": false,
+    "show_motion_speed": false,
+    "enable_parallel_processing": true,
+    "turbo_mode": true,
+    "skip_frame_processing": true,
+    "km_box_vid": "9031",
+    "km_box_pid": "5586",
+    "km_net_ip": "192.168.2.188",
+    "km_net_port": "41176",
+    "km_net_uuid": "E0DAE466",
+    "dhz_ip": "192.168.8.88",
+    "dhz_port": 3069,
+    "dhz_random": 41,
+    "catbox_ip": "192.168.7.1",
+    "catbox_port": 8888,
+    "catbox_uuid": "ad60ecf0",
+    "km_com": "COM4",
+    "move_method": "km_net",
+    "is_curve": true,
+    "is_curve_uniform": true,
+    "is_show_curve": false,
+    "curve_type": "Exponential",
+    "auto_curve_switch": false,
+    "curve_switch_mode": "combined",
+    "curve_switch_count": 10,
+    "curve_switch_interval": 5.0,
+    "curve_switch_probability": 10.0,
+    "is_show_down": false,
+    "offset_boundary_x": 6,
+    "offset_boundary_y": 6,
+    "knots_count": 3,
+    "distortion_mean": 0.5,
+    "distortion_st_dev": 0.5,
+    "distortion_frequency": 0.1,
+    "target_points": 3,
+    "distance_scoring_weight": 0.44,
+    "center_scoring_weight": 0.36,
+    "size_scoring_weight": 0.2,
+    "group": "sjz",
+    "picked_game": "cs2",
+    "down_switch_key": "f5",
+    "is_obs": true,
+    "obs_ip": "169.254.80.4",
+    "obs_port": 6666,
+    "obs_fps": 144,
+    "is_cjk": false,
+    "cjk_device_id": 0,
+    "cjk_fps": 240,
+    "cjk_resolution": "1920x1080",
+    "cjk_crop_size": "256x256",
+    "cjk_fourcc_format": "NV12",
+    "mask_left": false,
+    "mask_right": false,
+    "mask_middle": false,
+    "mask_side1": false,
+    "mask_side2": false,
+    "mask_x": false,
+    "aim_mask_x": false,
+    "mask_y": false,
+    "aim_mask_y": false,
+    "mask_wheel": false,
+    "groups": {
+        "valorant": {
+            "infer_model": "C:/Users/Administrator/Desktop/ZTXAI/weights/cs2_320.onnx",
+            "auto_y": true,
+            "long_press_duration": 0,
+            "right_down": false,
+            "aim_keys": {
+                "mouse_right": {
+                    "confidence_threshold": 0.5,
+                    "iou_t": 1,
+                    "aim_bot_position": 0.069,
+                    "aim_bot_scope": 150,
+                    "dynamic_scope": {
+                        "enabled": false,
+                        "min_scope": 40,
+                        "shrink_duration_ms": 10,
+                        "recover_duration_ms": 1
+                    },
+                    "smoothing_factor": 0.1,
+                    "base_step": 0.2,
+                    "distance_weight": 1,
+                    "fov_angle": 103,
+                    "history_size": 5,
+                    "output_scale_x": 0.8,
+                    "output_scale_y": 0.5,
+                    "deadzone": 3,
+                    "uniform_threshold": 100000,
+                    "compensation_factor": 0.2,
+                    "continuous_aim": false,
+                    "always_aim": false,
+                    "trigger": {
+                        "status": true,
+                        "continuous": false,
+                        "recoil": false,
+                        "start_delay": 0,
+                        "press_delay": 50,
+                        "end_delay": 150,
+                        "random_delay": 15,
+                        "x_trigger_scope": 1.0,
+                        "y_trigger_scope": 1.0,
+                        "x_trigger_offset": 0.0,
+                        "y_trigger_offset": 0.0
+                    },
+                    "classes": [
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        0
+                    ],
+                    "class_priority_order": [
+                        0,
+                        1
+                    ],
+                    "class_aim_positions": {
+                        "0": {
+                            "aim_bot_position": 0.5,
+                            "aim_bot_position2": 0.5,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.5
+                        },
+                        "1": {
+                            "aim_bot_position": 0.5,
+                            "aim_bot_position2": 0.5,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.5
+                        },
+                        "2": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "3": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "4": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        }
+                    },
+                    "min_position_offset": 0,
+                    "min_velocity_threshold": 50,
+                    "max_velocity_threshold": 10000,
+                    "aim_bot_position2": 0.069,
+                    "lock_target_enabled": true,
+                    "lock_target_miss_threshold": 10,
+                    "lock_target_position_threshold": 50,
+                    "controller_mode": "classic",
+                    "pid_kp_x": 0.2,
+                    "pid_ki_x": 2.0,
+                    "pid_kd_x": 0.003,
+                    "pid_kp_y": 0.2,
+                    "pid_ki_y": 2.0,
+                    "pid_kd_y": 0.003,
+                    "pid_integral_limit_x": 5.0,
+                    "pid_integral_limit_y": 5.0,
+                    "smooth_x": 1.0,
+                    "smooth_y": 1.0,
+                    "smooth_deadzone": 0.0,
+                    "smooth_algorithm": 1.0,
+                    "move_deadzone": 0.0,
+                    "target_switch_delay": 0,
+                    "target_reference_class": 0,
+                    "pid_integral_limit": 5,
+                    "pid_output_limit": 15,
+                    "pid_deadzone": 2,
+                    "lock_target_class_id": 0,
+                    "overshoot_threshold": 3.0,
+                    "overshoot_x_factor": 0.5,
+                    "overshoot_y_factor": 0.3
+                },
+                "mouse_x1": {
+                    "confidence_threshold": 0.5,
+                    "iou_t": 1,
+                    "aim_bot_position": 0.069,
+                    "aim_bot_scope": 150,
+                    "dynamic_scope": {
+                        "enabled": false,
+                        "min_scope": 40,
+                        "shrink_duration_ms": 10,
+                        "recover_duration_ms": 1
+                    },
+                    "smoothing_factor": 0.1,
+                    "base_step": 0.2,
+                    "distance_weight": 1,
+                    "fov_angle": 103,
+                    "history_size": 5,
+                    "output_scale_x": 0.8,
+                    "output_scale_y": 0.5,
+                    "deadzone": 3,
+                    "uniform_threshold": 100000,
+                    "compensation_factor": 0.2,
+                    "continuous_aim": false,
+                    "always_aim": false,
+                    "trigger": {
+                        "status": false,
+                        "continuous": false,
+                        "recoil": false,
+                        "start_delay": 0,
+                        "press_delay": 50,
+                        "end_delay": 150,
+                        "random_delay": 15,
+                        "x_trigger_scope": 1.0,
+                        "y_trigger_scope": 1.0,
+                        "x_trigger_offset": 0.0,
+                        "y_trigger_offset": 0.0
+                    },
+                    "classes": [
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        0
+                    ],
+                    "class_priority_order": [
+                        0,
+                        1
+                    ],
+                    "class_aim_positions": {
+                        "0": {
+                            "aim_bot_position": 0.5,
+                            "aim_bot_position2": 0.5,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.5
+                        },
+                        "1": {
+                            "aim_bot_position": 0.5,
+                            "aim_bot_position2": 0.5,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.5
+                        },
+                        "2": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "3": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "4": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        }
+                    },
+                    "min_position_offset": 0,
+                    "min_velocity_threshold": 50,
+                    "max_velocity_threshold": 10000,
+                    "aim_bot_position2": 0.069,
+                    "lock_target_enabled": true,
+                    "lock_target_miss_threshold": 10,
+                    "lock_target_position_threshold": 50,
+                    "controller_mode": "classic",
+                    "pid_kp_x": 0.2,
+                    "pid_ki_x": 2.0,
+                    "pid_kd_x": 0.003,
+                    "pid_kp_y": 0.2,
+                    "pid_ki_y": 2.0,
+                    "pid_kd_y": 0.003,
+                    "pid_integral_limit_x": 5.0,
+                    "pid_integral_limit_y": 5.0,
+                    "smooth_x": 1.0,
+                    "smooth_y": 1.0,
+                    "smooth_deadzone": 0.0,
+                    "smooth_algorithm": 1.0,
+                    "move_deadzone": 0.0,
+                    "target_switch_delay": 0,
+                    "target_reference_class": 0,
+                    "pid_integral_limit": 5,
+                    "pid_output_limit": 15,
+                    "pid_deadzone": 2,
+                    "lock_target_class_id": 0,
+                    "overshoot_threshold": 3.0,
+                    "overshoot_x_factor": 0.5,
+                    "overshoot_y_factor": 0.3
+                },
+                "mouse_x2": {
+                    "confidence_threshold": 0.5,
+                    "iou_t": 1,
+                    "aim_bot_position": 0.069,
+                    "aim_bot_scope": 150,
+                    "dynamic_scope": {
+                        "enabled": false,
+                        "min_scope": 40,
+                        "shrink_duration_ms": 10,
+                        "recover_duration_ms": 1
+                    },
+                    "smoothing_factor": 0.1,
+                    "base_step": 0.2,
+                    "distance_weight": 1,
+                    "fov_angle": 103,
+                    "history_size": 5,
+                    "output_scale_x": 0.8,
+                    "output_scale_y": 0.5,
+                    "deadzone": 3,
+                    "uniform_threshold": 100000,
+                    "compensation_factor": 0.2,
+                    "continuous_aim": false,
+                    "always_aim": false,
+                    "trigger": {
+                        "status": false,
+                        "continuous": false,
+                        "recoil": false,
+                        "start_delay": 0,
+                        "press_delay": 50,
+                        "end_delay": 150,
+                        "random_delay": 15,
+                        "x_trigger_scope": 1.0,
+                        "y_trigger_scope": 1.0,
+                        "x_trigger_offset": 0.0,
+                        "y_trigger_offset": 0.0
+                    },
+                    "classes": [
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        0
+                    ],
+                    "class_priority_order": [
+                        0,
+                        1
+                    ],
+                    "class_aim_positions": {
+                        "0": {
+                            "aim_bot_position": 0.5,
+                            "aim_bot_position2": 0.5,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.5
+                        },
+                        "1": {
+                            "aim_bot_position": 0.5,
+                            "aim_bot_position2": 0.5,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.5
+                        },
+                        "2": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "3": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "4": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        }
+                    },
+                    "min_position_offset": 0,
+                    "min_velocity_threshold": 50,
+                    "max_velocity_threshold": 10000,
+                    "aim_bot_position2": 0.069,
+                    "lock_target_enabled": true,
+                    "lock_target_miss_threshold": 10,
+                    "lock_target_position_threshold": 50,
+                    "controller_mode": "classic",
+                    "pid_kp_x": 0.2,
+                    "pid_ki_x": 2.0,
+                    "pid_kd_x": 0.003,
+                    "pid_kp_y": 0.2,
+                    "pid_ki_y": 2.0,
+                    "pid_kd_y": 0.003,
+                    "pid_integral_limit_x": 5.0,
+                    "pid_integral_limit_y": 5.0,
+                    "smooth_x": 1.0,
+                    "smooth_y": 1.0,
+                    "smooth_deadzone": 0.0,
+                    "smooth_algorithm": 1.0,
+                    "move_deadzone": 0.0,
+                    "target_switch_delay": 0,
+                    "target_reference_class": 0,
+                    "pid_integral_limit": 5,
+                    "pid_output_limit": 15,
+                    "pid_deadzone": 2,
+                    "lock_target_class_id": 0,
+                    "overshoot_threshold": 3.0,
+                    "overshoot_x_factor": 0.5,
+                    "overshoot_y_factor": 0.3
+                }
+            },
+            "is_v8": true,
+            "is_trt": false,
+            "original_infer_model": "C:/Users/Administrator/Desktop/ZTXAI/weights/cs2_320.onnx",
+            "model_variant": "v8onnx"
+        },
+        "sjz": {
+            "infer_model": "C:/Users/Administrator/Desktop/models/sjz320v8.onnx",
+            "auto_y": true,
+            "long_press_duration": 0,
+            "right_down": false,
+            "aim_keys": {
+                "mouse_left": {
+                    "confidence_threshold": 0.5,
+                    "iou_t": 1,
+                    "aim_bot_position": 0.069,
+                    "aim_bot_scope": 160,
+                    "dynamic_scope": {
+                        "enabled": false,
+                        "min_scope": 48,
+                        "shrink_duration_ms": 60,
+                        "recover_duration_ms": 298
+                    },
+                    "smoothing_factor": 0.1,
+                    "base_step": 0.2,
+                    "distance_weight": 1,
+                    "fov_angle": 103,
+                    "history_size": 5,
+                    "output_scale_x": 0.8,
+                    "output_scale_y": 0.5,
+                    "deadzone": 3,
+                    "uniform_threshold": 100000,
+                    "compensation_factor": 0.2,
+                    "continuous_aim": false,
+                    "always_aim": false,
+                    "trigger": {
+                        "status": false,
+                        "continuous": false,
+                        "recoil": false,
+                        "start_delay": 0,
+                        "press_delay": 150,
+                        "end_delay": 0,
+                        "random_delay": 5,
+                        "x_trigger_scope": 1.0,
+                        "y_trigger_scope": 1.0,
+                        "x_trigger_offset": 0.0,
+                        "y_trigger_offset": 0.0
+                    },
+                    "classes": [
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        0
+                    ],
+                    "class_priority_order": [
+                        0
+                    ],
+                    "class_aim_positions": {
+                        "0": {
+                            "aim_bot_position": 0.37,
+                            "aim_bot_position2": 0.38,
+                            "confidence_threshold": 0.49,
+                            "iou_t": 0.49
+                        },
+                        "1": {
+                            "aim_bot_position": 1.2,
+                            "aim_bot_position2": 1.2,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.5
+                        },
+                        "2": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "3": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "4": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        }
+                    },
+                    "min_position_offset": 2,
+                    "min_velocity_threshold": 50,
+                    "max_velocity_threshold": 10000,
+                    "aim_bot_position2": 0.069,
+                    "lock_target_enabled": true,
+                    "lock_target_miss_threshold": 10,
+                    "lock_target_position_threshold": 50,
+                    "controller_mode": "classic",
+                    "pid_kp_x": 0.185,
+                    "pid_ki_x": 0.0,
+                    "pid_kd_x": 0.0011,
+                    "pid_kp_y": 0.185,
+                    "pid_ki_y": 0.0,
+                    "pid_kd_y": 0.0011,
+                    "pid_integral_limit_x": 8.5821,
+                    "pid_integral_limit_y": 8.5821,
+                    "smooth_x": 0.3,
+                    "smooth_y": 0.3,
+                    "smooth_deadzone": 0.0,
+                    "smooth_algorithm": 1.0,
+                    "move_deadzone": 0.0,
+                    "target_switch_delay": 0,
+                    "target_reference_class": 0,
+                    "pid_integral_limit": 5,
+                    "pid_output_limit": 15,
+                    "pid_deadzone": 2,
+                    "lock_target_class_id": 0,
+                    "overshoot_threshold": 3.0,
+                    "overshoot_x_factor": 0.5,
+                    "overshoot_y_factor": 0.3,
+                    "auto_y": false,
+                    "enabled": true,
+                    "pid_error_filter_alpha": 0.0,
+                    "pid_vel_filter_alpha": 0.18,
+                    "tracker_enabled": false,
+                    "tracker_match_thresh": 0.3,
+                    "tracker_track_buffer": 30
+                },
+                "mouse_x1": {
+                    "confidence_threshold": 0.5,
+                    "iou_t": 1,
+                    "aim_bot_position": 0.069,
+                    "aim_bot_scope": 160,
+                    "dynamic_scope": {
+                        "enabled": false,
+                        "min_scope": 48,
+                        "shrink_duration_ms": 60,
+                        "recover_duration_ms": 298
+                    },
+                    "smoothing_factor": 0.1,
+                    "base_step": 0.2,
+                    "distance_weight": 1,
+                    "fov_angle": 103,
+                    "history_size": 5,
+                    "output_scale_x": 0.8,
+                    "output_scale_y": 0.5,
+                    "deadzone": 3,
+                    "uniform_threshold": 100000,
+                    "compensation_factor": 0.2,
+                    "continuous_aim": false,
+                    "always_aim": false,
+                    "trigger": {
+                        "status": true,
+                        "continuous": false,
+                        "recoil": false,
+                        "start_delay": 0,
+                        "press_delay": 150,
+                        "end_delay": 0,
+                        "random_delay": 5,
+                        "x_trigger_scope": 0.6299999952316284,
+                        "y_trigger_scope": 0.3700000047683716,
+                        "x_trigger_offset": 0.1599999964237213,
+                        "y_trigger_offset": 0.0
+                    },
+                    "classes": [
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        0
+                    ],
+                    "class_priority_order": [
+                        0
+                    ],
+                    "class_aim_positions": {
+                        "0": {
+                            "aim_bot_position": 0.28,
+                            "aim_bot_position2": 0.29,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.49
+                        },
+                        "1": {
+                            "aim_bot_position": 1.2,
+                            "aim_bot_position2": 1.2,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.5
+                        },
+                        "2": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "3": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "4": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        }
+                    },
+                    "min_position_offset": 3,
+                    "min_velocity_threshold": 50,
+                    "max_velocity_threshold": 10000,
+                    "aim_bot_position2": 0.069,
+                    "lock_target_enabled": true,
+                    "lock_target_miss_threshold": 10,
+                    "lock_target_position_threshold": 50,
+                    "controller_mode": "classic",
+                    "pid_kp_x": 0.09,
+                    "pid_ki_x": 0.0,
+                    "pid_kd_x": 0.0031,
+                    "pid_kp_y": 0.09,
+                    "pid_ki_y": 0.0,
+                    "pid_kd_y": 0.0031,
+                    "pid_integral_limit_x": 20.8955,
+                    "pid_integral_limit_y": 19.7761,
+                    "smooth_x": 0.0,
+                    "smooth_y": 0.0,
+                    "smooth_deadzone": 0.0,
+                    "smooth_algorithm": 1.0,
+                    "move_deadzone": 0.0,
+                    "target_switch_delay": 0,
+                    "target_reference_class": 0,
+                    "pid_integral_limit": 5,
+                    "pid_output_limit": 15,
+                    "pid_deadzone": 2,
+                    "lock_target_class_id": 0,
+                    "overshoot_threshold": 3.0,
+                    "overshoot_x_factor": 0.5,
+                    "overshoot_y_factor": 0.3,
+                    "auto_y": false,
+                    "enabled": true
+                },
+                "mouse_right": {
+                    "confidence_threshold": 0.5,
+                    "iou_t": 1,
+                    "aim_bot_position": 0.069,
+                    "aim_bot_scope": 160,
+                    "dynamic_scope": {
+                        "enabled": false,
+                        "min_scope": 48,
+                        "shrink_duration_ms": 60,
+                        "recover_duration_ms": 298
+                    },
+                    "smoothing_factor": 0.1,
+                    "base_step": 0.2,
+                    "distance_weight": 1,
+                    "fov_angle": 103,
+                    "history_size": 5,
+                    "output_scale_x": 0.8,
+                    "output_scale_y": 0.5,
+                    "deadzone": 3,
+                    "uniform_threshold": 100000,
+                    "compensation_factor": 0.2,
+                    "continuous_aim": false,
+                    "always_aim": false,
+                    "trigger": {
+                        "status": false,
+                        "continuous": false,
+                        "recoil": false,
+                        "start_delay": 0,
+                        "press_delay": 150,
+                        "end_delay": 0,
+                        "random_delay": 5,
+                        "x_trigger_scope": 1.0,
+                        "y_trigger_scope": 1.0,
+                        "x_trigger_offset": 0.0,
+                        "y_trigger_offset": 0.0
+                    },
+                    "classes": [
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        0
+                    ],
+                    "class_priority_order": [
+                        0
+                    ],
+                    "class_aim_positions": {
+                        "0": {
+                            "aim_bot_position": 0.37,
+                            "aim_bot_position2": 0.38,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.49
+                        },
+                        "1": {
+                            "aim_bot_position": 1.2,
+                            "aim_bot_position2": 1.2,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 0.5
+                        },
+                        "2": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "3": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        },
+                        "4": {
+                            "aim_bot_position": 0.0,
+                            "aim_bot_position2": 0.0,
+                            "confidence_threshold": 0.5,
+                            "iou_t": 1.0
+                        }
+                    },
+                    "min_position_offset": 2,
+                    "min_velocity_threshold": 50,
+                    "max_velocity_threshold": 10000,
+                    "aim_bot_position2": 0.069,
+                    "lock_target_enabled": true,
+                    "lock_target_miss_threshold": 10,
+                    "lock_target_position_threshold": 50,
+                    "controller_mode": "classic",
+                    "pid_kp_x": 0.185,
+                    "pid_ki_x": 0.0,
+                    "pid_kd_x": 0.003,
+                    "pid_kp_y": 0.185,
+                    "pid_ki_y": 0.0,
+                    "pid_kd_y": 0.003,
+                    "pid_integral_limit_x": 8.5821,
+                    "pid_integral_limit_y": 8.5821,
+                    "smooth_x": 0.5,
+                    "smooth_y": 0.5,
+                    "smooth_deadzone": 1.8657,
+                    "smooth_algorithm": 1.0,
+                    "move_deadzone": 0.0,
+                    "target_switch_delay": 0,
+                    "target_reference_class": 0,
+                    "pid_integral_limit": 5,
+                    "pid_output_limit": 15,
+                    "pid_deadzone": 2,
+                    "lock_target_class_id": 0,
+                    "overshoot_threshold": 3.0,
+                    "overshoot_x_factor": 0.5,
+                    "overshoot_y_factor": 0.3,
+                    "auto_y": false,
+                    "enabled": true,
+                    "pid_error_filter_alpha": 0.0,
+                    "pid_vel_filter_alpha": 0.0,
+                    "tracker_enabled": true,
+                    "tracker_match_thresh": 0.3,
+                    "tracker_track_buffer": 30
+                }
+            },
+            "is_v8": true,
+            "is_trt": false,
+            "original_infer_model": "C:/Users/Administrator/Desktop/models/sjz320v8.onnx",
+            "model_variant": "v8onnx"
+        }
+    },
+    "games": {
+        "cs2": {
+            "akk": [
+                {
+                    "number": 20,
+                    "offset": [
+                        0,
+                        0
+                    ]
+                },
+                {
+                    "number": 40,
+                    "offset": [
+                        0,
+                        3
+                    ]
+                }
+            ],
+            "m44": [
+                {
+                    "number": 20,
+                    "offset": [
+                        0,
+                        0
+                    ]
+                },
+                {
+                    "number": 40,
+                    "offset": [
+                        0,
+                        1.5
+                    ]
+                }
+            ]
+        }
+    },
+    "is_show_lock_target": false,
+    "is_show_priority_debug": false,
+    "lock_target_enabled": true,
+    "show_infer_time": true,
+    "gui_dpi_scale": 0.0,
+    "screen_width": 2560,
+    "screen_height": 1600,
+    "web_password": "123456",
+    "enable_gpu": true,
+    "inference_device": "DML",
+    "auto_flashbang": {
+        "enabled": false,
+        "delay_ms": 1,
+        "turn_angle": 90,
+        "sensitivity_multiplier": 1.0,
+        "return_delay": 1,
+        "min_confidence": 0.3,
+        "min_size": 1,
+        "use_curve": true,
+        "curve_speed": 0.0,
+        "curve_knots": 0,
+        "detect_class_ids": [
+            0,
+            1
+        ]
+    },
+    "recoil": {
+        "use_mouse_re_trajectory": false,
+        "replay_speed": 1,
+        "pixel_enhancement_ratio": 1,
+        "mapping": {}
+    },
+    "performance_mode": "balanced",
+    "use_async_move": true,
+    "frame_skip_ratio": 0,
+    "cpu_optimization": true,
+    "memory_optimization": true,
+    "small_target_enhancement": {
+        "enabled": true,
+        "boost_factor": 5.0,
+        "threshold": 0.0010000000474974513,
+        "medium_threshold": 0.10000000149011612,
+        "medium_boost": 1.5,
+        "smooth_enabled": true,
+        "smooth_frames": 5,
+        "adaptive_nms": true
+    },
+    "crosshair_tracking": {
+        "enabled": false,
+        "mode": "crosshair_follow",
+        "detection_area_size": 120,
+        "only_center_area": true,
+        "miss_detection_enabled": true,
+        "miss_threshold": 12.0,
+        "detection_frequency": 350,
+        "failure_fallback_enabled": true,
+        "failure_fallback_delay_ms": 50.0,
+        "color_parallel_enabled": true,
+        "max_color_workers": 2,
+        "colors": [
+            {
+                "name": "新颜色",
+                "r": 169,
+                "g": 147,
+                "b": 133,
+                "tolerance": 15,
+                "enabled": false
+            },
+            {
+                "name": "新颜色",
+                "r": 74,
+                "g": 67,
+                "b": 61,
+                "tolerance": 15,
+                "enabled": false
+            },
+            {
+                "name": "新颜色",
+                "r": 197,
+                "g": 214,
+                "b": 217,
+                "tolerance": 15,
+                "enabled": false
+            },
+            {
+                "name": "新颜色",
+                "r": 195,
+                "g": 226,
+                "b": 232,
+                "tolerance": 10,
+                "enabled": false,
+                "h_low": 64,
+                "h_high": 180,
+                "s_low": 76,
+                "s_high": 255,
+                "v_low": 82,
+                "v_high": 255
+            }
+        ],
+        "filter": {
+            "morphology_kernel_size": 3,
+            "min_area": 2,
+            "time_filter_window": 1
+        },
+        "image_enhancement": {
+            "enabled": true,
+            "clahe_clip_limit": 2.0,
+            "clahe_tile_size": 8,
+            "saturation_boost": 1.15,
+            "sharpen_enabled": true,
+            "sharpen_strength": 0.5,
+            "denoise_enabled": false,
+            "denoise_strength": 3
+        },
+        "adaptive_area_enabled": true,
+        "area_min_size": 24,
+        "area_max_size": 120,
+        "area_expand_conf_threshold": 0.01,
+        "area_shrink_conf_threshold": 0.02,
+        "area_size_step": 4,
+        "area_adjust_interval_frames": 1,
+        "aiming": {
+            "smoothing_factor": 0.1,
+            "speed_multiplier": 2.0,
+            "deadzone": 0.1
+        },
+        "correction_weight": 1.0,
+        "passive_correction_enabled": true,
+        "passive_correction_weight": 1.0,
+        "_crosshair_position": null,
+        "show_position": false,
+        "show_detection_area": true,
+        "show_mask": false,
+        "_color_picker_active": false,
+        "movement_range": {
+            "enabled": true,
+            "min_x": 120,
+            "max_x": 210,
+            "min_y": 0,
+            "max_y": 200,
+            "smoothing_factor": 0.1,
+            "_current_preset": "中心区域",
+            "_is_adjusting": true
+        },
+        "boundary_visualization": {
+            "enabled": true,
+            "line_width": 2,
+            "dash_length": 10,
+            "dash_gap": 5,
+            "color": [
+                0,
+                255,
+                255
+            ],
+            "highlight_color": [
+                0,
+                165,
+                255
+            ],
+            "highlight_line_width": 3
+        },
+        "parameter_display": {
+            "enabled": true,
+            "update_fps": 30,
+            "position": "top_left"
+        },
+        "_current_detection_region": [
+            105,
+            65,
+            205,
+            165
+        ],
+        "_current_detection_center": [
+            155,
+            115
+        ],
+        "detection_area_offset": {
+            "x": 0,
+            "y": 0,
+            "enabled": false,
+            "dynamic_mode": false,
+            "movement_range": {
+                "min_x": 60,
+                "max_x": 60,
+                "min_y": 160,
+                "max_y": 60
+            }
+        },
+        "_detection_area_adjustment_active": false,
+        "detection_area_height": 35,
+        "detection_area_width": 35,
+        "ml_assist_enabled": true,
+        "gpu_color_ops_enabled": true,
+        "tolerance_profile": "auto",
+        "shape_matching": {
+            "enabled": true,
+            "reference_area": 16.0,
+            "reference_aspect_ratio": 1.0,
+            "reference_circularity": 0.7853981633974483,
+            "reference_hu_moments": [
+                0.7781512503836683,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            ],
+            "area_tolerance": 0.5,
+            "aspect_ratio_tolerance": 0.5,
+            "circularity_tolerance": 0.3,
+            "hu_similarity_threshold": 0.35,
+            "template_enabled": true,
+            "template_points": 64,
+            "template_similarity_threshold": 0.6,
+            "template_weight": 0.35,
+            "reference_contour_template": [
+                [
+                    -0.8528025150299072,
+                    -0.8528025150299072
+                ],
+                [
+                    -0.8528025150299072,
+                    -0.7462022304534912
+                ],
+                [
+                    -0.8528025150299072,
+                    -0.6396018862724304
+                ],
+                [
+                    -0.8528025150299072,
+                    -0.5330015420913696
+                ],
+                [
+                    -0.8528025150299072,
+                    -0.4264012575149536
+                ],
+                [
+                    -0.8528025150299072,
+                    -0.3198009431362152
+                ],
+                [
+                    -0.8528025150299072,
+                    -0.2132006287574768
+                ],
+                [
+                    -0.8528025150299072,
+                    -0.1066003143787384
+                ],
+                [
+                    -0.8528025150299072,
+                    0.0
+                ],
+                [
+                    -0.8528025150299072,
+                    0.1066003143787384
+                ],
+                [
+                    -0.8528025150299072,
+                    0.2132006287574768
+                ],
+                [
+                    -0.8528025150299072,
+                    0.3198009431362152
+                ],
+                [
+                    -0.8528025150299072,
+                    0.4264012575149536
+                ],
+                [
+                    -0.8528025150299072,
+                    0.5330015420913696
+                ],
+                [
+                    -0.8528025150299072,
+                    0.6396018862724304
+                ],
+                [
+                    -0.8528025150299072,
+                    0.7462022304534912
+                ],
+                [
+                    -0.8528025150299072,
+                    0.8528025150299072
+                ],
+                [
+                    -0.7462021708488464,
+                    0.8528025150299072
+                ],
+                [
+                    -0.6396018266677856,
+                    0.8528025150299072
+                ],
+                [
+                    -0.5330014824867249,
+                    0.8528025150299072
+                ],
+                [
+                    -0.42640113830566406,
+                    0.8528025150299072
+                ],
+                [
+                    -0.31980079412460327,
+                    0.8528025150299072
+                ],
+                [
+                    -0.21320044994354248,
+                    0.8528025150299072
+                ],
+                [
+                    -0.10660010576248169,
+                    0.8528025150299072
+                ],
+                [
+                    2.384186643666908e-07,
+                    0.8528025150299072
+                ],
+                [
+                    0.10660058259963989,
+                    0.8528025150299072
+                ],
+                [
+                    0.21320092678070068,
+                    0.8528025150299072
+                ],
+                [
+                    0.3198012709617615,
+                    0.8528025150299072
+                ],
+                [
+                    0.42640161514282227,
+                    0.8528025150299072
+                ],
+                [
+                    0.5330019593238831,
+                    0.8528025150299072
+                ],
+                [
+                    0.6396023035049438,
+                    0.8528025150299072
+                ],
+                [
+                    0.7462026476860046,
+                    0.8528025150299072
+                ],
+                [
+                    0.8528025150299072,
+                    0.852802038192749
+                ],
+                [
+                    0.8528025150299072,
+                    0.7462016940116882
+                ],
+                [
+                    0.8528025150299072,
+                    0.6396013498306274
+                ],
+                [
+                    0.8528025150299072,
+                    0.5330010056495667
+                ],
+                [
+                    0.8528025150299072,
+                    0.42640066146850586
+                ],
+                [
+                    0.8528025150299072,
+                    0.31980031728744507
+                ],
+                [
+                    0.8528025150299072,
+                    0.21319997310638428
+                ],
+                [
+                    0.8528025150299072,
+                    0.10659962892532349
+                ],
+                [
+                    0.8528025150299072,
+                    -7.152559078349441e-07
+                ],
+                [
+                    0.8528025150299072,
+                    -0.10660106688737869
+                ],
+                [
+                    0.8528025150299072,
+                    -0.2132013887166977
+                ],
+                [
+                    0.8528025150299072,
+                    -0.3198017477989197
+                ],
+                [
+                    0.8528025150299072,
+                    -0.42640209197998047
+                ],
+                [
+                    0.8528025150299072,
+                    -0.5330024361610413
+                ],
+                [
+                    0.8528025150299072,
+                    -0.639602780342102
+                ],
+                [
+                    0.8528025150299072,
+                    -0.7462031245231628
+                ],
+                [
+                    0.8528015613555908,
+                    -0.8528025150299072
+                ],
+                [
+                    0.74620121717453,
+                    -0.8528025150299072
+                ],
+                [
+                    0.6396008729934692,
+                    -0.8528025150299072
+                ],
+                [
+                    0.5330005288124084,
+                    -0.8528025150299072
+                ],
+                [
+                    0.42640018463134766,
+                    -0.8528025150299072
+                ],
+                [
+                    0.31979984045028687,
+                    -0.8528025150299072
+                ],
+                [
+                    0.21319949626922607,
+                    -0.8528025150299072
+                ],
+                [
+                    0.10659915208816528,
+                    -0.8528025150299072
+                ],
+                [
+                    -1.1920932365683257e-06,
+                    -0.8528025150299072
+                ],
+                [
+                    -0.1066015362739563,
+                    -0.8528025150299072
+                ],
+                [
+                    -0.2132018804550171,
+                    -0.8528025150299072
+                ],
+                [
+                    -0.3198022246360779,
+                    -0.8528025150299072
+                ],
+                [
+                    -0.42640256881713867,
+                    -0.8528025150299072
+                ],
+                [
+                    -0.5330029129981995,
+                    -0.8528025150299072
+                ],
+                [
+                    -0.6396032571792603,
+                    -0.8528025150299072
+                ],
+                [
+                    -0.746203601360321,
+                    -0.8528025150299072
+                ]
+            ]
+        },
+        "background_rejection": {
+            "enabled": true,
+            "ring_px": 3,
+            "max_ring_ratio": 0.2,
+            "min_bbox_fill_ratio": 0.04
+        },
+        "debug_window": false
+    },
+    "debug_logging": {
+        "enabled": false,
+        "log_level": "INFO",
+        "log_to_file": false,
+        "log_file": "debug",
+        "log_to_console": false,
+        "categories": {
+            "crosshair": false,
+            "coordinate": false,
+            "drawing": false,
+            "aiming": false
+        }
+    },
+    "show_fov": true,
+    "makcu_firmware": "MAKCU-DirectSerial",
+    "auto_start_web_panel": false,
+    "enable_web_server": false,
+    "crosshair_color_lock": {
+        "enabled": true,
+        "roi_width": 25,
+        "roi_height": 25,
+        "hsv_ranges": [
+            {
+                "h_min": 35,
+                "h_max": 179,
+                "s_min": 53,
+                "s_max": 91,
+                "v_min": 194,
+                "v_max": 255
+            },
+            {
+                "h_min": 55,
+                "h_max": 179,
+                "s_min": 86,
+                "s_max": 255,
+                "v_min": 143,
+                "v_max": 255
+            },
+            {
+                "h_min": 80,
+                "h_max": 179,
+                "s_min": 53,
+                "s_max": 108,
+                "v_min": 198,
+                "v_max": 255
+            }
+        ],
+        "active_index": 1,
+        "show_crosshair": false,
+        "show_lock_box": true,
+        "min_area": 0.03999999910593033,
+        "pull_k": 0.5,
+        "pull_max_speed": 18.55299949645996,
+        "pull_deadzone": 0.07500000298023224,
+        "last_rgb": [
+            115,
+            77,
+            50
+        ],
+        "h_tolerance": 2,
+        "s_tolerance": 3,
+        "v_tolerance": 3,
+        "show_mask": true,
+        "max_area": 20.0,
+        "show_active_only": true,
+        "ema_smooth": 1.0,
+        "small_pixel_threshold": 120,
+        "show_debug_log": false
+    },
+    "model_runtime": {
+        "v11_auto_discover": true,
+        "v11_expected_opset": null,
+        "v11_expected_model_version": null,
+        "v11_strict_graph": true,
+        "v11_search_dirs": [],
+        "intra_op_num_threads": 0,
+        "inter_op_num_threads": 0,
+        "enable_cpu_mem_arena": true,
+        "enable_mem_pattern": true,
+        "execution_mode": "sequential",
+        "graph_optimization_level": "all",
+        "cuda_mem_limit_mb": 0,
+        "arena_extend_strategy": "kNextPowerOfTwo",
+        "selected_device_override": ""
+    },
+    "target_sticky_pixels": 17.0,
+    "large_target_threshold": 0.055,
+    "large_target_boost": 1.12,
+    "target_lock_ms": 500.0,
+    "target_id_lock_enabled": true,
+    "kalman": {
+        "enabled": false,
+        "predict_frames": 5
+    }
+}

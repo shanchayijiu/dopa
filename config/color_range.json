@@ -1,0 +1,12 @@
+{
+    "Rmin": 135,
+    "Rmax": 0,
+    "Gmin": 36,
+    "Gmax": 5,
+    "Bmin": 222,
+    "Bmax": 93,
+    "radius": 50,
+    "enabled": true,
+    "min_area": 50,
+    "max_area": 1000
+}
