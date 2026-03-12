@@ -1,8 +1,3 @@
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: screenshot_manager.py
-# Bytecode version: 3.10.0rc2 (3439)
-# Source timestamp: 1970-01-01 00:00:00 UTC (0)
-
 """
 截图分离管理模块
 
@@ -186,15 +181,20 @@ class PerformanceMonitor:
         return config
 
 
+_ONE_GB = 1024 ** 3  # 1 GB 字节数
+_MIN_CPU_CORES = 4
+_MIN_MEMORY_GB = 8
+
+
 def check_performance_requirements():
     """检查性能要求"""
     import psutil
     import platform
     try:
         cpu_count = psutil.cpu_count(logical=False)
-        memory = psutil.virtual_memory().total / 1073741824
+        memory = psutil.virtual_memory().total / _ONE_GB
         system = platform.system()
-        if cpu_count >= 4 and memory >= 8:
+        if cpu_count >= _MIN_CPU_CORES and memory >= _MIN_MEMORY_GB:
             return True
         return False
     except Exception:
@@ -541,7 +541,7 @@ class ScreenshotManager:
                         if hasattr(self.bettercam_capture, 'stop'):
                             self.bettercam_capture.stop()
                         del self.bettercam_capture
-                    except:
+                    except Exception:
                         pass
                 self.bettercam_capture = None
                 with open('error_log.txt', 'a', encoding='utf-8') as f:
@@ -868,8 +868,6 @@ class ScreenshotManager:
                 with open('error_log.txt', 'a', encoding='utf-8') as f:
                     f.write('[显示截图异常] ' + str(e) + '\n' + traceback.format_exc() + '\n')
                 print(f'显示截图异常: {e}')
-
-    pass
 
     def put_screenshot_result(self, screenshot, boxes, scores, classes, fps_text, infer_time_ms, current_key='',
                               current_scope=0, aim_key_status=False, is_v8=False, pid_deadzone=0.0,

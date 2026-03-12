@@ -7,7 +7,6 @@ import ctypes
 import time
 import os
 import sys
-from ctypes import *
 from threading import Thread, Event
 from cat.catnet_lite import CatNetLite, ErrorCode, BTN_LEFT, BTN_RIGHT, BTN_MIDDLE, BTN_SIDE, BTN_EXTRA
 
@@ -228,7 +227,7 @@ class CatBoxWrapper:
             try:
                 self.process.terminate()
                 self.process.wait(timeout=5)
-            except:
+            except Exception:
                 self.process.kill()
             self.process = None
         try:

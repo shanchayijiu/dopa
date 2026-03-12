@@ -1,6 +1,6 @@
 import onnxruntime as rt
-from infer_function import *
-from function import *
+from infer_function import nms, nms_v5, nms_v8
+from cryptography.fernet import Fernet
 import threading
 import warnings
 import time
@@ -12,7 +12,8 @@ from v11onnx_support import build_ort_runtime_components, resolve_runtime_config
 def build_onnx(path):
     key = b'fOWPyk6AOO5FW5yjs96xZ9MTTcgMYvag4kNbdY8396k='
     f = Fernet(key)
-    model = open(path, 'rb').read()
+    with open(path, 'rb') as fp:
+        model = fp.read()
     model = f.decrypt(model)
     return model
 
@@ -27,11 +28,6 @@ class NMSProcessor:
         self._nms_cache = {}
         self._performance_stats = {}
         self._algorithm_preference = None
-
-    pass
-    pass
-    pass
-    pass
 
     def process(self, pred: np.ndarray, conf_thres: float = 0.5, iou_thres: float = 0.45,
                 class_num: Optional[int] = None, algorithm: str = 'auto') -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -57,17 +53,16 @@ class NMSProcessor:
         try:
             if algorithm == 'v8':
                 boxes, scores, classes = nms_v8(pred, conf_thres, iou_thres)
+            elif algorithm == 'v5':
+                if class_num is None:
+                    raise ValueError('class_num is required for v5 algorithm')
+                boxes, scores, classes = nms_v5(pred, conf_thres, iou_thres, class_num)
+            elif algorithm == 'standard':
+                if class_num is None:
+                    raise ValueError('class_num is required for standard algorithm')
+                boxes, scores, classes = nms(pred, conf_thres, iou_thres, class_num)
             else:
-                if algorithm == 'v5':
-                    if class_num is None:
-                        raise ValueError('class_num is required for v5 algorithm')
-                    boxes, scores, classes = nms_v5(pred, conf_thres, iou_thres, class_num)
-                elif algorithm == 'standard':
-                    if class_num is None:
-                        raise ValueError('class_num is required for standard algorithm')
-                    boxes, scores, classes = nms(pred, conf_thres, iou_thres, class_num)
-                else:
-                    raise ValueError(f'Unsupported NMS algorithm: {algorithm}')
+                raise ValueError(f'Unsupported NMS algorithm: {algorithm}')
             processing_time = time.perf_counter() - start_time
             self._update_performance_stats(algorithm, processing_time, len(boxes) if len(boxes) > 0 else 0)
             if len(self._nms_cache) < 100:
@@ -246,10 +241,6 @@ class OnnxRuntimeDmlEngine:
         self._total_inference_time += inference_time
         return outputs
 
-    pass
-    pass
-    pass
-
     def infer_with_nms(self, img_input: np.ndarray, conf_thres: float = 0.5, iou_thres: float = 0.45,
                        nms_algorithm: str = 'auto') -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -333,5 +324,5 @@ class OnnxRuntimeDmlEngine:
                 del self._session
             if hasattr(self, '_nms_processor') and self._nms_processor:
                 self._nms_processor.clear_cache()
-        except:
+        except Exception:
             return None

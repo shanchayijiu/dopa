@@ -1,5 +1,9 @@
 import cv2
 import numpy as np
+
+# 1.0 / 255 —— 像素归一化因子
+NORMALIZE_FACTOR = 1.0 / 255  # 0.00392156862745098
+
 try:
     import numba as nb
     NUMBA_AVAILABLE = True
@@ -332,6 +336,6 @@ def read_img(img_data, size=(320, 320)):
             blob = np.expand_dims(blob, axis=0)
             return blob
         except Exception as e:
-            pass
-    blob = cv2.dnn.blobFromImage(image=img_data, scalefactor=0.00392156862745098, size=(target_w, target_h), mean=(0.0, 0.0, 0.0), swapRB=True, crop=False)
+            print(f'numba预处理回退: {e}')
+    blob = cv2.dnn.blobFromImage(image=img_data, scalefactor=NORMALIZE_FACTOR, size=(target_w, target_h), mean=(0.0, 0.0, 0.0), swapRB=True, crop=False)
     return blob

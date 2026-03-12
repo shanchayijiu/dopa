@@ -1,4 +1,4 @@
-import socket
+﻿import socket
 import threading
 import time
 
@@ -21,11 +21,10 @@ class DHZBOX:
             if char.isalpha():
                 if char.islower():
                     new_char = chr((ord(char) - ord('a') + key) % 26 + ord('a'))
-                else:  # inserted
-                    if char.isupper():
-                        new_char = chr((ord(char) - ord('A') + key) % 26 + ord('A'))
+                elif char.isupper():
+                    new_char = chr((ord(char) - ord('A') + key) % 26 + ord('A'))
                 encrypted_string.append(new_char)
-            else:  # inserted
+            else:
                 encrypted_string.append(char)
         return ''.join(encrypted_string)
 
@@ -38,7 +37,7 @@ class DHZBOX:
                 reply, _ = SCOK_sender.recvfrom(1024)
             except socket.timeout:
                 print('接收超时，未收到回复')
-        finally:  # inserted
+        finally:
             SCOK_sender.close()
 
     def __udp_receiver(self, port, ip=''):
@@ -55,7 +54,7 @@ class DHZBOX:
                 self.RIGHTSTATE = int(cmd[2])
                 self.SIDE1STATE = int(cmd[3])
                 self.SIDE2STATE = int(cmd[4])
-            except:
+            except (ValueError, IndexError):
                 self.LEFTSTATE, self.RIGHTSTATE, self.MIDDLESTATE, self.SIDE1STATE, self.SIDE2STATE = (0, 0, 0, 0, 0)
         print(port, '监听线程已关闭')
         SCOK_receiver.close()
@@ -69,7 +68,7 @@ class DHZBOX:
             mag = data.decode()
         print(port, '监听线程已关闭')
         SCOK_receiver.close()
-    pass
+
     def move(self, x, y):
         cmd = self.__encrypt_string(f'move({int(x)},{int(y)})')
         self.__udp_sender(cmd)
@@ -101,21 +100,20 @@ class DHZBOX:
     def side2(self, state):
         cmd = self.__encrypt_string(f'side2({int(state)})')
         self.__udp_sender(cmd)
-    pass
+
     def monitor(self, port):
         if port == 0:
             cmd = self.__encrypt_string('monitor(0)')
             self.RECEIVER_FLAG = False
             self.__udp_sender(cmd)
             time.sleep(0.5)
-        else:  # inserted
-            if abs(port) > 0:
-                cmd = self.__encrypt_string(f'monitor({int(port)})')
-                self.__udp_sender(cmd)
-                self.RECEIVER_FLAG = True
-                t_receiver = threading.Thread(target=self.__udp_receiver, name='t_receiver', args=(port,))
-                t_receiver.daemon = True
-                t_receiver.start()
+        elif abs(port) > 0:
+            cmd = self.__encrypt_string(f'monitor({int(port)})')
+            self.__udp_sender(cmd)
+            self.RECEIVER_FLAG = True
+            t_receiver = threading.Thread(target=self.__udp_receiver, name='t_receiver', args=(port,))
+            t_receiver.daemon = True
+            t_receiver.start()
 
     def isdown_left(self):
         return self.LEFTSTATE
@@ -127,11 +125,11 @@ class DHZBOX:
         return self.RIGHTSTATE
 
     def isdown_side1(self):
-        return self.SIDE2STATE
+        return self.SIDE1STATE
 
     def isdown_side2(self):
-        return self.SIDE1STATE
-    pass
+        return self.SIDE2STATE
+
     def mask_left(self, state):
         cmd = self.__encrypt_string(f'mask_left({int(state)})')
         self.__udp_sender(cmd)

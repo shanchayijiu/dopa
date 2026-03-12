@@ -9,6 +9,31 @@ import time
 import subprocess
 import sys
 import traceback
+import shutil
+
+
+def _import_cuda_driver():
+    """导入 CUDA driver，优先 pycuda，回退到 cuda_compat 兼容层。"""
+    try:
+        import pycuda.driver
+        return pycuda.driver
+    except ImportError:
+        import cuda_compat
+        return cuda_compat
+
+
+def _find_trtexec() -> str:
+    """定位 trtexec 可执行文件，优先使用项目 dll/ 目录下的版本。"""
+    # 1. 项目 dll/ 目录
+    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dll', 'trtexec.exe')
+    if os.path.isfile(local):
+        return local
+    # 2. PATH 中查找
+    found = shutil.which('trtexec')
+    if found:
+        return found
+    # 3. 回退
+    return 'trtexec'
 
 
 class TensorRTInferenceEngine:
@@ -22,7 +47,7 @@ class TensorRTInferenceEngine:
     def __init__(self, engine_path):
         try:
             import tensorrt as trt
-            import pycuda.driver as cuda
+            cuda = _import_cuda_driver()
         except (ImportError, OSError) as e:
             raise RuntimeError(
                 f'未检测到TensorRT/CUDA环境，无法使用TensorRT加速。请安装相关依赖或切换到ONNX Runtime。原始错误: {e}')
@@ -41,7 +66,7 @@ class TensorRTInferenceEngine:
                 if not os.path.exists(onnx_path):
                     raise RuntimeError(f'找不到对应的onnx文件: {onnx_path}')
                 import subprocess
-                cmd = f'trtexec --onnx="{onnx_path}" --saveEngine="{engine_path}"'
+                cmd = f'"{_find_trtexec()}" --onnx="{onnx_path}" --saveEngine="{engine_path}"'
                 process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                            encoding='utf-8')
                 for line in process.stdout:
@@ -64,8 +89,8 @@ class TensorRTInferenceEngine:
                 cuda_version = cuda.get_version()
                 try:
                     cupy.cuda.Device(0).use()
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f'CUDA Device(0).use() 失败: {e}')
                 self._graph_supported = True
                 self._use_cupy_graph = True
                 try:
@@ -93,7 +118,7 @@ class TensorRTInferenceEngine:
         """
         try:
             import cupy
-            import pycuda.driver as cuda
+            cuda = _import_cuda_driver()
             cuda.init()
             cuda_version = cuda.get_version()
             if cuda_version >= (10, 0) or force:
@@ -143,7 +168,7 @@ class TensorRTInferenceEngine:
                 pass
         if hasattr(self, 'ctx'):
             try:
-                import pycuda.driver as cuda
+                cuda = _import_cuda_driver()
                 current = None
                 try:
                     current = cuda.Context.get_current()
@@ -166,7 +191,7 @@ class TensorRTInferenceEngine:
         Returns:
             tuple: 包含输入、输出、绑定和CUDA流的元组
         """
-        import pycuda.driver as cuda
+        cuda = _import_cuda_driver()
         import tensorrt as trt
         inputs = []
         outputs = []
@@ -195,7 +220,7 @@ class TensorRTInferenceEngine:
         Returns:
             list: 推理结果
         """
-        import pycuda.driver as cuda
+        cuda = _import_cuda_driver()
         import numpy as np
         use_graph = bool(
             getattr(self, '_use_cuda_graph', False) and getattr(self, '_graph_supported', False) and getattr(self,
@@ -306,7 +331,7 @@ def auto_convert_engine(model_path):
     print(f'开始TRT转换流程，模型路径: {model_path}')
     try:
         import tensorrt as trt
-        import pycuda.driver as cuda
+        cuda = _import_cuda_driver()
         import onnxruntime as ort
         print(f'TensorRT版本: {trt.__version__}')
         cuda.init()
@@ -359,7 +384,7 @@ def auto_convert_engine(model_path):
     except Exception as e:
         print(f'检测FP16支持时出错: {e}')
         supports_fp16 = False
-    cmd = f'trtexec --onnx="{onnx_path}" --saveEngine="{engine_path}" --verbose'
+    cmd = f'"{_find_trtexec()}" --onnx="{onnx_path}" --saveEngine="{engine_path}" --verbose'
     if supports_fp16:
         cmd += ' --fp16'
         print('启用FP16精度优化')
@@ -433,7 +458,7 @@ def auto_convert_engine_from_memory(
     # ---- 依赖检查 ----
     try:
         import tensorrt as trt
-        import pycuda.driver as cuda
+        cuda = _import_cuda_driver()
         import onnxruntime as ort
         import numpy as np
         cuda.init()
@@ -558,13 +583,12 @@ def auto_convert_engine_from_memory(
                 print("使用旧API设置形状")
             config.add_optimization_profile(profile)
             print("添加优化Profile成功")
-        else:
-            if (dims[2], dims[3]) != H_W:
-                try:
-                    print(f"调整静态输入shape {dims} -> [1,3,{H_W[0]},{H_W[1]}]")
-                    input_tensor.shape = (1, 3, H_W[0], H_W[1])
-                except Exception as e:
-                    print(f"静态shape调整失败: {e}")
+        elif (dims[2], dims[3]) != H_W:
+            try:
+                print(f"调整静态输入shape {dims} -> [1,3,{H_W[0]},{H_W[1]}]")
+                input_tensor.shape = (1, 3, H_W[0], H_W[1])
+            except Exception as e:
+                print(f"静态shape调整失败: {e}")
 
         print("开始构建引擎…")
         engine_bytes = builder.build_serialized_network(network, config)
@@ -597,8 +621,8 @@ def auto_convert_engine_from_memory(
             if os.path.exists(final_engine_path):
                 os.remove(final_engine_path)
                 print(f"已删除不完整引擎: {final_engine_path}")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f'删除不完整引擎文件失败: {e}')
         return (False, final_engine_path)
 
 

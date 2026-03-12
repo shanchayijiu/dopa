@@ -57,10 +57,6 @@ class ConfigChangeHandler:
             raise ValueError(f'未注册的上下文: {context_name}')
         return self.context_providers[context_name]()
 
-    pass
-    pass
-    pass
-
     def register_config_item(self, control_id: str, config_path: str, value_type: type = None,
                              post_processor: Callable = None, special_handler: Callable = None) -> None:
         """
@@ -215,10 +211,6 @@ class ConfigItemGroup:
         """
         self.handler = handler
         self.base_path = base_path
-
-    pass
-    pass
-    pass
 
     def register_item(self, control_id: str, path: str, value_type: type = None, post_processor: Callable = None,
                       special_handler: Callable = None) -> None:

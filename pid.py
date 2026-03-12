@@ -181,7 +181,7 @@ class DualAxisPID:
         try:
             tau_x = float(self.smooth_x) / 1000.0  # ms to seconds
             tau_y = float(self.smooth_y) / 1000.0
-        except:
+        except (ValueError, TypeError):
             tau_x, tau_y = 0.0, 0.0
 
         if delta_time <= 0.000001:

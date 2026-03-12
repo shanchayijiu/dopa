@@ -16,12 +16,9 @@ from function import *
 from infer_class import *
 import onnxruntime as rt
 from infer_function import *
-from function import *
 import json
 import math
-import win32gui
 from cryptography.fernet import Fernet
-import cv2
 import numpy as np
 import requests
 import os
@@ -32,7 +29,6 @@ from dearpygui import dearpygui as dpg
 import base64
 import websocket
 from concurrent.futures import ThreadPoolExecutor
-import pyclick
 from pyclick import HumanCurve
 import pydirectinput
 import serial

@@ -14,7 +14,8 @@ def build_model(path, username):
         modified_username = 'model_2025_SecureSalt_v1.0' + username + 'CodeBy:HuiyeStudio'
         key = generate_key(modified_username)
         cipher = Fernet(key)
-        file_content = open(path, 'rb').read()
+        with open(path, 'rb') as fp:
+            file_content = fp.read()
         model_bytes = cipher.decrypt(file_content)
         return model_bytes
     except Exception as e:

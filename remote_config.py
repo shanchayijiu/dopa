@@ -42,6 +42,7 @@ class RemoteConfigManager:
 
         self._token = None
         self._token_exp = None
+        self._token_lock = threading.Lock()
         self._heartbeat_thread = None
         self._heartbeat_stop = threading.Event()
         self._hwid = None
@@ -118,40 +119,51 @@ class RemoteConfigManager:
             return None
 
     # ---------- 令牌 & 心跳 ----------
-    def _set_token_from_response(self, result: dict):
-        data = result.get('data', {}) if isinstance(result, dict) else {}
-        token = data.get('token')
-        if not token:
-            return
-        self._token = token
+    def _parse_jwt_exp(self, token: str):
+        """从 JWT token 中解析 exp 字段，失败返回 None。"""
         try:
             parts = token.split('.')
             if len(parts) == 3:
                 p = parts[1]
                 p += '=' * ((4 - len(p) % 4) & 3)
                 payload = json.loads(base64.urlsafe_b64decode(p.encode()).decode())
-                self._token_exp = int(payload.get('exp', 0))
+                return int(payload.get('exp', 0))
         except Exception:
-            self._token_exp = None
+            pass
+        return None
 
+    def _apply_token(self, token: str):
+        """线程安全地设置 token 和 exp，并同步到 user_info_manager（如可用）。"""
+        exp = self._parse_jwt_exp(token)
+        with self._token_lock:
+            self._token = token
+            self._token_exp = exp
         if self.debug_mode:
-            exp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self._token_exp)) if self._token_exp else 'unknown'
-            left = self._token_exp - int(time.time()) if self._token_exp else -1
-            print(f"[AUTH] 获取令牌: exp={exp_str}, 剩余={left}s")
-
+            exp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(exp)) if exp else 'unknown'
+            left = exp - int(time.time()) if exp else -1
+            print(f"[AUTH] 令牌更新: exp={exp_str}, 剩余={left}s")
         if USER_INFO_AVAILABLE:
             try:
                 from user_info_manager import user_info_manager
-                user_info_manager.set_token(self._token)
+                user_info_manager.set_token(token)
             except Exception:
                 pass
 
+    def _set_token_from_response(self, result: dict):
+        data = result.get('data', {}) if isinstance(result, dict) else {}
+        token = data.get('token')
+        if not token:
+            return
+        self._apply_token(token)
+
     def _auth_headers(self):
         headers = {'Content-Type': 'application/json'}
-        if self._token:
-            headers['Authorization'] = f"Bearer {self._token}"
+        with self._token_lock:
+            token = self._token
+        if token:
+            headers['Authorization'] = f"Bearer {token}"
         if self.debug_mode:
-            print(f"[AUTH] 请求携带Authorization: {bool(self._token)}")
+            print(f"[AUTH] 请求携带Authorization: {bool(token)}")
         return headers
 
     def _start_heartbeat(self):
@@ -172,13 +184,16 @@ class RemoteConfigManager:
         interval = 60
         while not self._heartbeat_stop.is_set():
             try:
-                if not self._token:
+                with self._token_lock:
+                    token = self._token
+                    token_exp = self._token_exp
+                if not token:
                     time.sleep(interval)
                     continue
                 # 是否接近过期（<5 分钟）
-                near = (self._token_exp and self._token_exp - int(time.time()) < 300)
+                near = (token_exp and token_exp - int(time.time()) < 300)
                 if self.debug_mode:
-                    left = self._token_exp - int(time.time()) if self._token_exp else -1
+                    left = token_exp - int(time.time()) if token_exp else -1
                     print(f"[HB] {'即将过期，续期' if near else '心跳续期'}，剩余={left}s")
                 self._renew_token()
             except Exception as e:
@@ -193,26 +208,7 @@ class RemoteConfigManager:
         response.raise_for_status()
         res = response.json()
         if res.get('success') and res.get('token'):
-            self._token = res['token']
-            try:
-                parts = self._token.split('.')
-                if len(parts) == 3:
-                    p = parts[1]
-                    p += '=' * ((4 - len(p) % 4) & 3)
-                    payload = json.loads(base64.urlsafe_b64decode(p.encode()).decode())
-                    self._token_exp = int(payload.get('exp', 0))
-            except Exception:
-                self._token_exp = None
-            if self.debug_mode:
-                exp_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self._token_exp)) if self._token_exp else 'unknown'
-                left = self._token_exp - int(time.time()) if self._token_exp else -1
-                print(f"[HB] 续期成功: exp={exp_str}, 剩余={left}s")
-            if USER_INFO_AVAILABLE:
-                try:
-                    from user_info_manager import user_info_manager
-                    user_info_manager.set_token(self._token)
-                except Exception:
-                    pass
+            self._apply_token(res['token'])
         elif self.debug_mode:
             print(f"[HB] 心跳续期失败: {res}")
 
@@ -284,8 +280,8 @@ class RemoteConfigManager:
                 if USER_INFO_AVAILABLE:
                     try:
                         hwid = get_system_info().get('hwid')
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f'获取系统hwid失败: {e}')
             if not hwid:
                 hwid = 'unknown'
             self._hwid = hwid

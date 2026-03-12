@@ -1,4 +1,4 @@
-import copy
+﻿import copy
 import ctypes
 import json
 import math
@@ -10,7 +10,7 @@ import string
 import sys
 import time
 import traceback
-from ctypes import *
+from ctypes import CDLL, CFUNCTYPE, c_void_p, windll
 from queue import Queue
 from threading import Thread, Timer
 from decode_model import build_model
@@ -36,32 +36,45 @@ from tkinter import filedialog
 from aim_pipeline import AimPipeline
 TENSORRT_AVAILABLE = False
 
-def check_tensorrt_availability():
-    """安全检测TensorRT环境是否可用"""  # inserted
+# ---- 提前将项目 dll/ 目录注册到进程 PATH 和 DLL 搜索路径 ----
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_dll_path = os.path.join(_current_dir, 'dll')
+if os.path.isdir(_dll_path):
+    os.environ['PATH'] = _dll_path + os.pathsep + os.environ.get('PATH', '')
+    if hasattr(os, 'add_dll_directory'):
+        try:
+            os.add_dll_directory(_dll_path)
+        except OSError:
+            pass
 
+def check_tensorrt_availability():
+    """安全检测TensorRT环境是否可用（也搜索项目 dll/ 文件夹）"""
     try:
-        import glob, os
+        import glob
+        # 搜索 PATH 中所有目录（含已添加的 dll/）
         path_dirs = os.environ.get('PATH', '').split(os.pathsep)
         found_nvinfer = False
         for path_dir in path_dirs:
             if not path_dir or not os.path.isdir(path_dir):
                 continue
             try:
-                nvinfer_pattern = os.path.join(path_dir, 'nvinfer_*.dll')
-                nvinfer_files = glob.glob(nvinfer_pattern)
-                if nvinfer_files:
+                if glob.glob(os.path.join(path_dir, 'nvinfer*.dll')):
                     found_nvinfer = True
+                    print(f'在 {path_dir} 发现 TensorRT DLL')
                     break
-            except:
+            except (OSError, ValueError):
                 continue
         if not found_nvinfer:
             print('TensorRT DLL文件未找到，将使用ONNX推理')
             return False
         try:
             import tensorrt as trt
-            import pycuda.driver as cuda
+            try:
+                import pycuda.driver as cuda
+            except ImportError:
+                import cuda_compat as cuda
             cuda.init()
-            print('TensorRT环境检测成功')
+            print(f'TensorRT环境检测成功 (TensorRT {trt.__version__})')
             return True
         except (ImportError, OSError) as e:
             print(f'TensorRT模块导入失败: {e}')
@@ -71,6 +84,7 @@ def check_tensorrt_availability():
         print(f'TensorRT环境检测失败: {e}')
         print('将使用ONNX推理')
         return False
+
 TENSORRT_AVAILABLE = check_tensorrt_availability()
 
 def detect_inference_devices():
@@ -141,10 +155,10 @@ def detect_inference_devices():
 from buff import Buff_Single, Buff_User
 from remote_config import get_remote_config, save_remote_config, is_remote_config_loaded
 from dhz import DHZBOX
-from function import *
 from gui_handlers import ConfigChangeHandler, ConfigItemGroup
 from profiler import FrameProfiler
-from infer_class import *
+from infer_class import OnnxRuntimeDmlEngine
+from infer_function import nms, nms_v8, read_img
 from v11onnx_support import (
     ModelValidationError,
     build_ort_runtime_components,
@@ -159,12 +173,6 @@ TensorRTInferenceEngine = None
 ensure_engine_from_memory = None
 if TENSORRT_AVAILABLE:
     try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        dll_path = os.path.join(current_dir, 'dll')
-        if os.path.exists(dll_path):
-            os.environ['PATH'] = dll_path + os.pathsep + os.environ['PATH']
-            if hasattr(os, 'add_dll_directory'):
-                os.add_dll_directory(dll_path)
         from inference_engine import TensorRTInferenceEngine, ensure_engine_from_memory
         print('TensorRT推理引擎模块加载成功')
     except Exception as e:
@@ -173,7 +181,8 @@ if TENSORRT_AVAILABLE:
         TENSORRT_AVAILABLE = False
         TensorRTInferenceEngine = None
         ensure_engine_from_memory = None
-print('跳过TensorRT模块导入，使用纯ONNX模式')
+else:
+    print('跳过TensorRT模块导入，使用纯ONNX模式')
 from makcu import MakcuController
 import socket
 from obs import OBSVideoStream
@@ -216,65 +225,7 @@ VERSION = 'v2.1.5'
 UPDATE_TIME = '2025-11-04'
 
 from pynput.keyboard import Key, KeyCode
-
-_KEY_ALIAS = {
-    Key.space: "space",
-    Key.enter: "enter",
-    Key.tab: "tab",
-    Key.backspace: "backspace",
-    Key.esc: "esc",
-    Key.shift: "shift",
-    Key.shift_l: "shift",
-    Key.shift_r: "shift",
-    Key.ctrl: "ctrl",
-    Key.ctrl_l: "ctrl",
-    Key.ctrl_r: "ctrl",
-    Key.alt: "alt",
-    Key.alt_l: "alt",
-    Key.alt_r: "alt",
-    Key.caps_lock: "caps_lock",
-    Key.cmd: "cmd",
-    Key.cmd_l: "cmd",
-    Key.cmd_r: "cmd",
-    Key.up: "up",
-    Key.down: "down",
-    Key.left: "left",
-    Key.right: "right",
-    Key.delete: "delete",
-    Key.home: "home",
-    Key.end: "end",
-    Key.page_up: "page_up",
-    Key.page_down: "page_down",
-    Key.insert: "insert",
-}
-def key2str(key) -> str:
-    """把 pynput 的 key 对象统一成字符串"""
-    # 字母/数字等可打印键
-    if isinstance(key, KeyCode):
-        if key.char:  # 普通字符
-            return key.char
-        # 没有 char 时，用虚拟键码兜底
-        if getattr(key, "vk", None) is not None:
-            vk = key.vk
-            # 小键盘 0-9
-            if 96 <= vk <= 105:
-                return f"kp_{vk - 96}"
-            return f"vk_{vk}"
-        return str(key)
-
-    # 功能键 / 特殊键
-    if isinstance(key, Key):
-        if key in _KEY_ALIAS:
-            return _KEY_ALIAS[key]
-        # F1~F24
-        name = getattr(key, "name", None) or str(key)
-        if name.startswith("f") and name[1:].isdigit():
-            return name  # e.g. 'f1'
-        # 兜底
-        return name.replace("Key.", "") if name.startswith("Key.") else name
-
-    # 兜底
-    return str(key)
+from function import key2str
 
 class Valorant:
     def __init__(self):
@@ -494,7 +445,7 @@ class Valorant:
                       
                         if onnx_path and os.path.exists(onnx_path):
                             group_data['infer_model'] = onnx_path
-                        else:  # inserted
+                        else:
                             possible_onnx = os.path.splitext(group_data['infer_model'])[0] + '.onnx'
                             if os.path.exists(possible_onnx):
                                 group_data['infer_model'] = possible_onnx
@@ -566,7 +517,7 @@ class Valorant:
         self.frame_profiler = FrameProfiler()
         if 'recoil' not in self.config:
             self.config['recoil'] = {'use_mouse_re_trajectory': False, 'replay_speed': 1.0, 'pixel_enhancement_ratio': 1.0, 'mapping': {}}
-        else:  # inserted
+        else:
             self.config['recoil'].setdefault('use_mouse_re_trajectory', False)
             self.config['recoil'].setdefault('replay_speed', 1.0)
             self.config['recoil'].setdefault('pixel_enhancement_ratio', 1.0)
@@ -726,62 +677,58 @@ class Valorant:
             method = getattr(self, f'on_{parts[0]}_change', None)
             if callable(method):
                 method(None, value)
-            else:  # inserted
-                if parts[0] not in self.config or self.config[parts[0]]!= value:
-                    self.config[parts[0]] = value
-                    value_changed = True
-        else:  # inserted
-            if len(parts) == 3 and parts[0] == 'groups':
-                group, key = (parts[1], parts[2])
-                method = getattr(self, f'on_{key}_change', None)
-                if callable(method):
-                    method(None, value)
-                else:  # inserted
-                    if group not in self.config['groups']:
-                        self.config['groups'][group] = {}
-                    if key not in self.config['groups'][group] or self.config['groups'][group][key]!= value:
-                        self.config['groups'][group][key] = value
+            elif parts[0] not in self.config or self.config[parts[0]]!= value:
+                self.config[parts[0]] = value
+                value_changed = True
+        elif len(parts) == 3 and parts[0] == 'groups':
+            group, key = (parts[1], parts[2])
+            method = getattr(self, f'on_{key}_change', None)
+            if callable(method):
+                method(None, value)
+            else:
+                if group not in self.config['groups']:
+                    self.config['groups'][group] = {}
+                if key not in self.config['groups'][group] or self.config['groups'][group][key]!= value:
+                    self.config['groups'][group][key] = value
                      
-                        value_changed = True
-            else:  # inserted
-                if len(parts) >= 5 and parts[0] == 'groups' and (parts[2] == 'aim_keys'):
-                    group, aim_key, param = (parts[1], parts[3], parts[4])
-                    if group not in self.config['groups']:
-                        self.config['groups'][group] = {}
-                    if 'aim_keys' not in self.config['groups'][group]:
+                    value_changed = True
+        elif len(parts) >= 5 and parts[0] == 'groups' and (parts[2] == 'aim_keys'):
+            group, aim_key, param = (parts[1], parts[3], parts[4])
+            if group not in self.config['groups']:
+                self.config['groups'][group] = {}
+            if 'aim_keys' not in self.config['groups'][group]:
                        
-                        self.config['groups'][group]['aim_keys'] = {}
-                    if aim_key not in self.config['groups'][group]['aim_keys']:
-                        self.config['groups'][group]['aim_keys'][aim_key] = {}
-                    if param == 'trigger' and len(parts) == 6:
-                        trigger_param = parts[5]
-                        if 'trigger' not in self.config['groups'][group]['aim_keys'][aim_key]:
-                            self.config['groups'][group]['aim_keys'][aim_key]['trigger'] = {'status': False, 'continuous': False, 'recoil': False, 'start_delay': 0, 'press_delay': 1, 'end_delay': 0, 'random_delay': 0, 'x_trigger_scope': 1.0, 'y_trigger_scope': 1.0, 'x_trigger_offset': 0.0, 'y_trigger_offset': 0.0}
-                        if trigger_param not in self.config['groups'][group]['aim_keys'][aim_key]['trigger'] or self.config['groups'][group]['aim_keys'][aim_key]['trigger'][trigger_param]!= value:
-                            self.config['groups'][group]['aim_keys'][aim_key]['trigger'][trigger_param] = value
+                self.config['groups'][group]['aim_keys'] = {}
+            if aim_key not in self.config['groups'][group]['aim_keys']:
+                self.config['groups'][group]['aim_keys'][aim_key] = {}
+            if param == 'trigger' and len(parts) == 6:
+                trigger_param = parts[5]
+                if 'trigger' not in self.config['groups'][group]['aim_keys'][aim_key]:
+                    self.config['groups'][group]['aim_keys'][aim_key]['trigger'] = {'status': False, 'continuous': False, 'recoil': False, 'start_delay': 0, 'press_delay': 1, 'end_delay': 0, 'random_delay': 0, 'x_trigger_scope': 1.0, 'y_trigger_scope': 1.0, 'x_trigger_offset': 0.0, 'y_trigger_offset': 0.0}
+                if trigger_param not in self.config['groups'][group]['aim_keys'][aim_key]['trigger'] or self.config['groups'][group]['aim_keys'][aim_key]['trigger'][trigger_param]!= value:
+                    self.config['groups'][group]['aim_keys'][aim_key]['trigger'][trigger_param] = value
                   
-                            value_changed = True
-                    else:  # inserted
-                        if param not in self.config['groups'][group]['aim_keys'][aim_key] or self.config['groups'][group]['aim_keys'][aim_key][param]!= value:
-                            self.config['groups'][group]['aim_keys'][aim_key][param] = value
+                    value_changed = True
+            elif param not in self.config['groups'][group]['aim_keys'][aim_key] or self.config['groups'][group]['aim_keys'][aim_key][param]!= value:
+                self.config['groups'][group]['aim_keys'][aim_key][param] = value
                     
-                            value_changed = True
-                    self.refresh_pressed_key_config(aim_key)
-                else:  # inserted
-                    obj = self.config
-                    for i, p in enumerate(parts[:(-1)]):
-                        if p not in obj:
-                            obj[p] = {}
-                        obj = obj[p]
-                    last_part = parts[(-1)]
-                    if last_part not in obj or obj[last_part]!= value:
-                        obj[last_part] = value
-                        value_changed = True
+                value_changed = True
+            self.refresh_pressed_key_config(aim_key)
+        else:
+            obj = self.config
+            for i, p in enumerate(parts[:(-1)]):
+                if p not in obj:
+                    obj[p] = {}
+                obj = obj[p]
+            last_part = parts[(-1)]
+            if last_part not in obj or obj[last_part]!= value:
+                obj[last_part] = value
+                value_changed = True
         if value_changed:
             print(f'配置已更改: {path} = {value}')
 
     def down_func(self, u_timer_id, u_msg, dw_user, dw1, dw2):
-        """原有的压枪逻辑，与mouse_re并存"""  # inserted
+        """原有的压枪逻辑，与mouse_re并存"""
         if self.config.get('recoil', {}).get('use_mouse_re_trajectory', False):
       
             return
@@ -816,7 +763,7 @@ class Valorant:
                     self.end = True
 
     def screenshot(self, left, top, right, bottom):
-        """已弃用：使用 self.screenshot_manager.get_screenshot 替代"""  # inserted
+        """已弃用：使用 self.screenshot_manager.get_screenshot 替代"""
      
         return self.screenshot_manager.get_screenshot((left, top, right, bottom))
 
@@ -861,24 +808,20 @@ class Valorant:
                 self.old_pressed_aim_key = key
                 self.aim_key_status = True
                 self.reset_dynamic_aim_scope(key)
-        else:  # inserted
-            if key == 'mouse_left':
-                if self.left_pressed:
-                    self.left_release()
-            elif key == 'mouse_right':
-                if self.right_pressed:
-                    self.right_pressed = False
+        elif key == 'mouse_left':
+            if self.left_pressed:
+                self.left_release()
+        elif key == 'mouse_right':
+            if self.right_pressed:
+                self.right_pressed = False
 
-            if key in self.aim_key and key == self.old_pressed_aim_key:
-                self.old_pressed_aim_key = ''
-                self.aim_key_status = False
-                self.reset_pid()
+        if key in self.aim_key and key == self.old_pressed_aim_key:
+            self.old_pressed_aim_key = ''
+            self.aim_key_status = False
+            self.reset_pid()
 
     def on_scroll(self, x, y, dx, dy):
-        if dy == 1:
-            return
-        if dy == (-1):
-            pass
+        pass
 
 
 
@@ -911,7 +854,7 @@ class Valorant:
             if self.down_switch:
                 if not self.config.get('recoil', {}).get('use_mouse_re_trajectory', False):
                     self.timer_id2 = self.time_set_event(self.delay, 1, self.down, 0, 1)
-            else:  # inserted
+            else:
                 if self.timer_id2!= 0:
                     self.time_kill_event(self.timer_id2)
                     self.timer_id2 = 0
@@ -1017,7 +960,7 @@ class Valorant:
             self._decrypt_encrypted_model('local_user')
 
     def _decrypt_encrypted_model(self, username):
-        """检查并解密文件（支持ZTX和ZTX格式）"""  # inserted
+        """检查并解密文件（支持ZTX和ZTX格式）"""
         try:
             model_path = self.config['groups'][self.group]['infer_model']
             if model_path.endswith('.ZTX') or model_path.endswith('.ZTX'):
@@ -1028,11 +971,11 @@ class Valorant:
                         self.original_model_path = model_path
                         self.refresh_engine()
                         self._update_class_checkboxes()
-                    else:  # inserted
+                    else:
                         self._secure_cleanup()
-                else:  # inserted
+                else:
                     self._secure_cleanup()
-            else:  # inserted
+            else:
                 self._secure_cleanup()
                 if model_path.endswith(('.onnx', '.engine')):
                     self.refresh_engine()
@@ -1041,7 +984,7 @@ class Valorant:
             self._secure_cleanup()
 
     def _validate_onnx_data(self, data):
-        """验证数据是否为有效的ONNX格式"""  # inserted
+        """验证数据是否为有效的ONNX格式"""
         try:
             import onnxruntime as rt
             providers = ['DmlExecutionProvider', 'CPUExecutionProvider'] if 'DmlExecutionProvider' in rt.get_available_providers() else ['CPUExecutionProvider']
@@ -1052,7 +995,7 @@ class Valorant:
             return False
 
     def _update_class_checkboxes(self):
-        """更新GUI中的类别多选框"""  # inserted
+        """更新GUI中的类别多选框"""
         try:
             class_num = self.get_current_class_num()
             class_ary = list(range(class_num))
@@ -1077,7 +1020,10 @@ class Valorant:
                 self.original_model_path = None
                 try:
                     if TENSORRT_AVAILABLE:
-                        from pycuda.driver import driver as cuda
+                        try:
+                            import pycuda.driver as cuda
+                        except ImportError:
+                            import cuda_compat as cuda
                         try:
                             current_ctx = cuda.Context.get_current()
                             if current_ctx is not None:
@@ -1127,7 +1073,7 @@ class Valorant:
         return True
 
     def save_config(self):
-        """异步保存配置到远程服务器"""  # inserted
+        """异步保存配置到远程服务器"""
 
         def _async_save():
             try:
@@ -1186,7 +1132,7 @@ class Valorant:
                     self.aim_key_status = True
                     self.reset_dynamic_aim_scope('mouse_left')
                    
-            else:  # inserted
+            else:
                 if self.left_pressed:
                     self.left_release()
                 if self.aim_key_status and self.old_pressed_aim_key == 'mouse_left':
@@ -1202,7 +1148,7 @@ class Valorant:
                     self.aim_key_status = True
                     self.reset_dynamic_aim_scope('mouse_right')
               
-            else:  # inserted
+            else:
                 if self.right_pressed:
                     self.right_pressed = False
                 if self.aim_key_status and self.old_pressed_aim_key == 'mouse_right':
@@ -1216,37 +1162,34 @@ class Valorant:
                     self.aim_key_status = True
                     self.reset_dynamic_aim_scope('mouse_x1')
                    
-            else:  # inserted
-                if self.aim_key_status and self.old_pressed_aim_key == 'mouse_x1':
-                    self.old_pressed_aim_key = ''
-                    self.aim_key_status = False
-                    self.reset_pid()
+            elif self.aim_key_status and self.old_pressed_aim_key == 'mouse_x1':
+                self.old_pressed_aim_key = ''
+                self.aim_key_status = False
+                self.reset_pid()
             if kmNet.isdown_side2():
                 if not self.aim_key_status and self.old_pressed_aim_key == '' and ('mouse_x2' in self.aim_key):
                     self.refresh_pressed_key_config('mouse_x2')
                     self.old_pressed_aim_key = 'mouse_x2'
                     self.aim_key_status = True
                     self.reset_dynamic_aim_scope('mouse_x2')
-            else:  # inserted
-                if self.aim_key_status and self.old_pressed_aim_key == 'mouse_x2':
-                    self.old_pressed_aim_key = ''
-                    self.aim_key_status = False
-                    self.reset_pid()
+            elif self.aim_key_status and self.old_pressed_aim_key == 'mouse_x2':
+                self.old_pressed_aim_key = ''
+                self.aim_key_status = False
+                self.reset_pid()
             if kmNet.isdown_middle():
                 if not self.aim_key_status and self.old_pressed_aim_key == '' and ('mouse_middle' in self.aim_key):
                     self.refresh_pressed_key_config('mouse_middle')
                     self.old_pressed_aim_key = 'mouse_middle'
                     self.aim_key_status = True
                     self.reset_dynamic_aim_scope('mouse_middle')
-            else:  # inserted
-                if self.aim_key_status and self.old_pressed_aim_key == 'mouse_middle':
-                    self.old_pressed_aim_key = ''
-                    self.aim_key_status = False
-                    self.reset_pid()
+            elif self.aim_key_status and self.old_pressed_aim_key == 'mouse_middle':
+                self.old_pressed_aim_key = ''
+                self.aim_key_status = False
+                self.reset_pid()
             time.sleep(0.005)
 
     def check_long_press(self):
-        """检查是否达到长按时间"""  # inserted
+        """检查是否达到长按时间"""
         if self.left_pressed:
             self.left_pressed_long = True
 
@@ -1300,89 +1243,95 @@ class Valorant:
                                 self.refresh_pressed_key_config(data['button'])
                                 self.old_pressed_aim_key = data['button']
                                 self.aim_key_status = True
-                    else:  # inserted
-                        if data['action'] == 0:
-                            if data['button'] == 'mouse_left' and self.left_pressed:
-                                self.left_release()
-                            if self.aim_key_status and self.old_pressed_aim_key == data['button']:
-                                self.old_pressed_aim_key = ''
-                                self.aim_key_status = False
-                                self.reset_pid()
+                    elif data['action'] == 0:
+                        if data['button'] == 'mouse_left' and self.left_pressed:
+                            self.left_release()
+                        if self.aim_key_status and self.old_pressed_aim_key == data['button']:
+                            self.old_pressed_aim_key = ''
+                            self.aim_key_status = False
+                            self.reset_pid()
         self.pnmh.Notify_Mouse(0)
+
+    def _setup_makcu(self):
+        """公共 makcu 初始化：连接设备 + 启动发送线程 + 绑定 move_r"""
+        if getattr(self, 'makcu', None) is None:
+            self.makcu = MakcuController()
+        else:
+            try:
+                self.makcu.disconnect()
+            except Exception:
+                pass
+            self.makcu = MakcuController()
+        if self.makcu is not None:
+            self._makcu_move_queue = Queue(maxsize=1024)
+            self._makcu_send_interval = 0.0015
+            self._makcu_last_send_ts = 0.0
+
+            def _makcu_sender_worker():
+                last_ts = 0.0
+                while not getattr(self, 'end', False):
+                    try:
+                        dx, dy = self._makcu_move_queue.get(timeout=0.1)
+                    except Exception:
+                        continue
+                    try:
+                        while True:
+                            nx, ny = self._makcu_move_queue.get_nowait()
+                            dx += int(nx)
+                            dy += int(ny)
+                    except Exception:
+                        pass
+                    now = time.perf_counter()
+                    wait_s = self._makcu_send_interval - (now - last_ts)
+                    if wait_s > 0:
+                        time.sleep(wait_s)
+                    send_ok = False
+                    for _ in range(2):
+                        try:
+                            if self.makcu is not None:
+                                self.makcu.move(int(dx), int(dy))
+                                send_ok = True
+                                break
+                        except Exception as e:
+                            try:
+                                if self.makcu is not None:
+                                    self.makcu.disconnect()
+                                    time.sleep(0.05)
+                                    self.makcu = MakcuController()
+                            except Exception:
+                                time.sleep(0.05)
+                    if not send_ok:
+                        time.sleep(0.01)
+                    last_ts = time.perf_counter()
+
+            def move_enqueue(x, y):
+                if self.makcu is None:
+                    return
+                try:
+                    self._makcu_move_queue.put_nowait((int(x), int(y)))
+                except Exception:
+                    try:
+                        _ = self._makcu_move_queue.get_nowait()
+                    except Exception:
+                        pass
+                    try:
+                        self._makcu_move_queue.put_nowait((int(x), int(y)))
+                    except Exception:
+                        return None
+            self.move_r = move_enqueue
+            if not hasattr(self, '_makcu_sender_started') or not self._makcu_sender_started:
+                t = Thread(target=_makcu_sender_worker, daemon=True)
+                t.start()
+                self._makcu_sender_started = True
+            self._init_makcu_locks()
+            return True
+        return False
 
     def start_listen_makcu(self):
         try:
             if self.config['move_method'] == 'makcu':
-                if getattr(self, 'makcu', None) is None:
-                    self.makcu = MakcuController()
-                else:  # inserted
-                    try:
-                        self.makcu.disconnect()
-                    except Exception:
-                        pass
-                    self.makcu = MakcuController()
+                self._setup_makcu()
                 if self.makcu is not None:
-                    self._makcu_move_queue = Queue(maxsize=1024)
-                    self._makcu_send_interval = 0.0015
-                    self._makcu_last_send_ts = 0.0
-
-                    def _makcu_sender_worker():
-                        last_ts = 0.0
-                        while not getattr(self, 'end', False):
-                            try:
-                                dx, dy = self._makcu_move_queue.get(timeout=0.1)
-                            except Exception:
-                                continue
-                            try:
-                                while True:
-                                    nx, ny = self._makcu_move_queue.get_nowait()
-                                    dx += int(nx)
-                                    dy += int(ny)
-                            except Exception:
-                                pass
-                            now = time.perf_counter()
-                            wait_s = self._makcu_send_interval - (now - last_ts)
-                            if wait_s > 0:
-                                time.sleep(wait_s)
-                            send_ok = False
-                            for _ in range(2):
-                                try:
-                                    if self.makcu is not None:
-                                        self.makcu.move(int(dx), int(dy))
-                                        send_ok = True
-                                        break
-                                except Exception as e:
-                                    try:
-                                        if self.makcu is not None:
-                                            self.makcu.disconnect()
-                                            time.sleep(0.05)
-                                            self.makcu = MakcuController()
-                                    except:
-                                        time.sleep(0.05)
-                            if not send_ok:
-                                time.sleep(0.01)
-                            last_ts = time.perf_counter()
-
-                    def move_enqueue(x, y):
-                        if self.makcu is None:
-                            return
-                        try:
-                            self._makcu_move_queue.put_nowait((int(x), int(y)))
-                        except Exception:
-                            try:
-                                _ = self._makcu_move_queue.get_nowait()
-                            except Exception:
-                                pass
-                            try:
-                                self._makcu_move_queue.put_nowait((int(x), int(y)))
-                            except Exception:
-                                return None
-                    self.move_r = move_enqueue
-                    if not hasattr(self, '_makcu_sender_started') or not self._makcu_sender_started:
-                        t = Thread(target=_makcu_sender_worker, daemon=True)
-                        t.start()
-                        self._makcu_sender_started = True
-                    self._init_makcu_locks()
                     self.makcu_listen_switch = True
                     while self.makcu_listen_switch:
                         try:
@@ -1399,7 +1348,7 @@ class Valorant:
                                     self.refresh_pressed_key_config('mouse_left')
                                     self.old_pressed_aim_key = 'mouse_left'
                                     self.aim_key_status = True
-                            else:  # inserted
+                            else:
                                 if self.left_pressed:
                                     self.left_release()
                                 if self.aim_key_status and self.old_pressed_aim_key == 'mouse_left':
@@ -1413,7 +1362,7 @@ class Valorant:
                                     self.refresh_pressed_key_config('mouse_right')
                                     self.old_pressed_aim_key = 'mouse_right'
                                     self.aim_key_status = True
-                            else:  # inserted
+                            else:
                                 if self.right_pressed:
                                     self.right_pressed = False
                                 if self.aim_key_status and self.old_pressed_aim_key == 'mouse_right':
@@ -1425,31 +1374,29 @@ class Valorant:
                                     self.refresh_pressed_key_config('mouse_x1')
                                     self.old_pressed_aim_key = 'mouse_x1'
                                     self.aim_key_status = True
-                            else:  # inserted
-                                if self.aim_key_status and self.old_pressed_aim_key == 'mouse_x1':
-                                    self.old_pressed_aim_key = ''
-                                    self.aim_key_status = False
-                                    self.reset_pid()
+                            elif self.aim_key_status and self.old_pressed_aim_key == 'mouse_x1':
+                                self.old_pressed_aim_key = ''
+                                self.aim_key_status = False
+                                self.reset_pid()
                             if not side2_state or (not self.aim_key_status and self.old_pressed_aim_key == '' and ('mouse_x2' in self.aim_key)):
                                 self.refresh_pressed_key_config('mouse_x2')
                                 self.old_pressed_aim_key = 'mouse_x2'
                                 self.aim_key_status = True
-                            else:  # inserted
-                                if self.aim_key_status and self.old_pressed_aim_key == 'mouse_x2':
-                                    self.old_pressed_aim_key = ''
-                                    self.aim_key_status = False
-                                    self.reset_pid()
-                        except Exception:
-                            pass
+                            elif self.aim_key_status and self.old_pressed_aim_key == 'mouse_x2':
+                                self.old_pressed_aim_key = ''
+                                self.aim_key_status = False
+                                self.reset_pid()
+                        except Exception as e:
+                            print(f'makcu按键状态监听异常: {e}')
                         time.sleep(0.01)
-                else:  # inserted
+                else:
                     print('makcu未连接')
         except Exception as e:
             print(f'Makcu监听失败: {e}')
             self.makcu = None
 
     def start_listen_catbox(self):
-        """CatBox监听线程 - 使用标准监听方式"""  # inserted
+        """CatBox监听线程 - 使用标准监听方式"""
         print('CatBox监听线程已启动')
         try:
             self.keyboard_listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
@@ -1460,7 +1407,7 @@ class Valorant:
             while True:
                 if not catbox.is_connected:
                     time.sleep(1)
-                else:  # inserted
+                else:
                     time.sleep(0.01)
         except Exception as e:
             print(f'CatBox监听初始化失败: {e}')
@@ -1479,7 +1426,7 @@ class Valorant:
                     self.refresh_pressed_key_config('mouse_left')
                     self.old_pressed_aim_key = 'mouse_left'
                     self.aim_key_status = True
-            else:  # inserted
+            else:
                 if self.left_pressed:
                     self.left_release()
                 if self.aim_key_status and self.old_pressed_aim_key == 'mouse_left':
@@ -1493,7 +1440,7 @@ class Valorant:
                     self.refresh_pressed_key_config('mouse_right')
                     self.old_pressed_aim_key = 'mouse_right'
                     self.aim_key_status = True
-            else:  # inserted
+            else:
                 if self.right_pressed:
                     self.right_pressed = False
                 if self.aim_key_status and self.old_pressed_aim_key == 'mouse_right':
@@ -1505,32 +1452,29 @@ class Valorant:
                     self.refresh_pressed_key_config('mouse_x1')
                     self.old_pressed_aim_key = 'mouse_x1'
                     self.aim_key_status = True
-            else:  # inserted
-                if self.aim_key_status and self.old_pressed_aim_key == 'mouse_x1':
-                    self.old_pressed_aim_key = ''
-                    self.aim_key_status = False
-                    self.reset_pid()
+            elif self.aim_key_status and self.old_pressed_aim_key == 'mouse_x1':
+                self.old_pressed_aim_key = ''
+                self.aim_key_status = False
+                self.reset_pid()
             if self.dhz.isdown_side2():
                 if not self.aim_key_status and self.old_pressed_aim_key == '' and ('mouse_x2' in self.aim_key):
                     self.refresh_pressed_key_config('mouse_x2')
                     self.old_pressed_aim_key = 'mouse_x2'
                     self.aim_key_status = True
-            else:  # inserted
-                if self.aim_key_status and self.old_pressed_aim_key == 'mouse_x2':
-                    self.old_pressed_aim_key = ''
-                    self.aim_key_status = False
-                    self.reset_pid()
+            elif self.aim_key_status and self.old_pressed_aim_key == 'mouse_x2':
+                self.old_pressed_aim_key = ''
+                self.aim_key_status = False
+                self.reset_pid()
             if self.dhz.isdown_middle():
                 if not self.aim_key_status and self.old_pressed_aim_key == '':
                     if 'mouse_middle' in self.aim_key:
                         self.refresh_pressed_key_config('mouse_middle')
                         self.old_pressed_aim_key = 'mouse_middle'
                         self.aim_key_status = True
-            else:  # inserted
-                if self.aim_key_status and self.old_pressed_aim_key == 'mouse_middle':
-                    self.old_pressed_aim_key = ''
-                    self.aim_key_status = False
-                    self.reset_pid()
+            elif self.aim_key_status and self.old_pressed_aim_key == 'mouse_middle':
+                self.old_pressed_aim_key = ''
+                self.aim_key_status = False
+                self.reset_pid()
             time.sleep(0.001)
         self.dhz.RECEIVER_FLAG = False
 
@@ -1621,7 +1565,7 @@ class Valorant:
             print('断开设备失败: ' + f'{e}')
 
     def unmask_all(self):
-        """解除所有屏蔽"""  # inserted
+        """解除所有屏蔽"""
         if self.config['move_method'] == 'makcu':
             if self.makcu is not None:
                 try:
@@ -1634,26 +1578,23 @@ class Valorant:
                     self.makcu.lock_my(0)
                 except Exception as e:
                     print(f'解除Makcu屏蔽失败: {e}')
-        else:  # inserted
-            if self.config['move_method'] == 'dhz':
-                if self.dhz is not None:
-                    self.dhz.mask_left(0)
-                    self.dhz.mask_right(0)
-                    self.dhz.mask_middle(0)
-                    self.dhz.mask_side1(0)
-                    self.dhz.mask_side2(0)
-                    self.dhz.mask_x(0)
-                    self.dhz.mask_y(0)
-                    self.dhz.mask_wheel(0)
-            else:  # inserted
-                if self.config['move_method'] == 'km_net':
-                    kmNet.unmask_all()
-                else:  # inserted
-                    if self.config['move_method'] == 'pnmh' and self.pnmh is not None:
-                        self.pnmh.Lock_Mouse(0)
+        elif self.config['move_method'] == 'dhz':
+            if self.dhz is not None:
+                self.dhz.mask_left(0)
+                self.dhz.mask_right(0)
+                self.dhz.mask_middle(0)
+                self.dhz.mask_side1(0)
+                self.dhz.mask_side2(0)
+                self.dhz.mask_x(0)
+                self.dhz.mask_y(0)
+                self.dhz.mask_wheel(0)
+        elif self.config['move_method'] == 'km_net':
+            kmNet.unmask_all()
+        elif self.config['move_method'] == 'pnmh' and self.pnmh is not None:
+            self.pnmh.Lock_Mouse(0)
 
     def smooth_small_targets(self, targets):
-        """\n        对小目标进行历史平滑处理，提高检测稳定性\n        """  # inserted
+        """\n        对小目标进行历史平滑处理，提高检测稳定性\n        """
         current_frame = time.time()
         for target_id in list(self.target_history.keys()):
             history = self.target_history[target_id]
@@ -1683,14 +1624,14 @@ class Valorant:
                     smoothed_target['size'] = avg_size
                     smoothed_target['smoothed'] = True
                     smoothed_targets.append(smoothed_target)
-                else:  # inserted
+                else:
                     smoothed_targets.append(target)
-            else:  # inserted
+            else:
                 smoothed_targets.append(target)
         return smoothed_targets
 
     def select_target_by_priority(self, targets):
-        """智能目标选择：基于距离中心点的优先级算法，带目标数量监控和积分重置"""  # inserted
+        """[已废弃] 旧版目标选择 - 功能已迁移至 aim_pipeline.select_target_by_priority()"""
         if not targets:
             if self.last_target_count > 0:
                 self.last_target_count = 0
@@ -1740,7 +1681,7 @@ class Valorant:
             current_time = time.time() * 1000
             if current_time - self.target_switch_time >= target_switch_delay:
                 self.is_waiting_for_switch = False
-            else:  # inserted
+            else:
                 return None
         self.last_target_count_by_class[reference_class] = current_target_count
         self.last_target_count = current_total_count
@@ -1920,9 +1861,8 @@ class Valorant:
             if is_small_mode:
                 if aspect_ratio < 0.15 or aspect_ratio > 6.0:
                     continue
-            else:
-                if aspect_ratio < 0.3 or aspect_ratio > 3.0:
-                    continue
+            elif aspect_ratio < 0.3 or aspect_ratio > 3.0:
+                continue
 
             area = cv2.contourArea(cnt)
             if area < min_area or area > max_area:
@@ -2168,7 +2108,7 @@ class Valorant:
                         model_width = self.engine.get_input_shape()[3]
                         model_height = self.engine.get_input_shape()[2]
                         model_area = model_width * model_height
-                    else:  # inserted
+                    else:
                         model_area = 102400
                     current_key = self.old_pressed_aim_key
                     auto_y = False
@@ -2196,12 +2136,11 @@ class Valorant:
                     boxes = aim_data.get('boxes')
                     class_ids = aim_data.get('class_ids', [])
                     aim_targets = boxes if boxes is not None else []
+                elif isinstance(aim_data, tuple):
+                    aim_targets, class_ids = aim_data
                 else:
-                    if isinstance(aim_data, tuple):
-                        aim_targets, class_ids = aim_data
-                    else:  # inserted
-                        aim_targets = aim_data
-                        class_ids = []
+                    aim_targets = aim_data
+                    class_ids = []
             except queue.Empty:
                 aim_targets = []
                 class_ids = []
@@ -2217,7 +2156,7 @@ class Valorant:
                     model_width = self.engine.get_input_shape()[3]
                     model_height = self.engine.get_input_shape()[2]
                     model_area = model_width * model_height
-                else:  # inserted
+                else:
                     model_area = 102400
                 if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
                     current_key = self.old_pressed_aim_key
@@ -2241,45 +2180,9 @@ class Valorant:
                         did_move = True
                         self.execute_move(move[0], move[1])
                 else:
-                    target_objects = []
-                    for i in range(len(aim_targets)):
-                        item = aim_targets[i]
-                        result_center_x, result_center_y, width, height = item
-                        class_id = class_ids[i] if i < len(class_ids) else 0
-                        aim_position = self.get_aim_position_for_class(class_id)
-                        absolute_area = width * height
-                        relative_size = absolute_area / model_area
-                        target_obj = {'pos': (self.identify_rect_left + result_center_x, self.identify_rect_top + (result_center_y - height / 2) + max(height * aim_position, self.pressed_key_config['min_position_offset'])), 'size': relative_size, 'absolute_size': absolute_area, 'relative_size': relative_size, 'class_id': class_id, 'aim_position': aim_position, 'id': f"{int(self.identify_rect_left + result_center_x)}_{int(self.identify_rect_top + (result_center_y - height / 2) + max(height * aim_position, self.pressed_key_config['min_position_offset']))}"}
-                        target_objects.append(target_obj)
-                    nearest = self.select_target_by_priority(target_objects)
-                if (not did_move) and nearest is not None:
-                    center_x, center_y = self.get_current_aim_center()
-                    result_center_x = nearest['pos'][0] - center_x
-                    result_center_y = nearest['pos'][1] - center_y
-                    if self.aim_key_status:
-                        current_key = self.old_pressed_aim_key
-                        auto_y = False
-                        if current_key in self.aim_keys_dist:
-                            auto_y = bool(self.aim_keys_dist[current_key].get('auto_y', False))
-                        if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
-                            move = self.aim_pipeline.compute_pid_move(
-                                result_center_x,
-                                result_center_y,
-                                self.pressed_key_config,
-                                auto_y=auto_y,
-                                left_pressed_long=self.left_pressed_long,
-                            )
-                            if move is not None:
-                                self.execute_move(move[0], move[1])
-                        else:
-                            relative_move_x, relative_move_y = self.aim_pid.compute(result_center_x, result_center_y)
-                            if auto_y and self.left_pressed_long:
-                                relative_move_y = 0
-                            move_threshold = self.pressed_key_config.get('move_deadzone', 1.0)
-                            if abs(relative_move_x) > move_threshold or abs(relative_move_y) > move_threshold:
-                                self.execute_move(relative_move_x, relative_move_y)
-                elif (not did_move) and crosshair_enabled and only_when_aiming:
-                    # 如果主自瞄没有目标，尝试使用准星找色
+                    # [已废弃] 旧版手动目标选择路径 — aim_pipeline 应始终可用
+                    print('[警告] aim_pipeline 未初始化，跳过手动瞄准（旧路径已废弃）')
+                if (not did_move) and crosshair_enabled and only_when_aiming:
                     self._try_crosshair_pull(crosshair_cfg)
             else:
                 pass
@@ -2291,7 +2194,7 @@ class Valorant:
             move_thread = Thread(target=self._execute_move_async, args=(relative_move_x, relative_move_y))
             move_thread.daemon = True
             move_thread.start()
-        else:  # inserted
+        else:
             self._execute_move_async(relative_move_x, relative_move_y)
 
     def _emit_move_rel(self, dx, dy):
@@ -2308,7 +2211,7 @@ class Valorant:
             curve = curve.points
             if isinstance(curve, tuple):
                 self._emit_move_rel(relative_move_x, relative_move_y)
-            else:  # inserted
+            else:
                 if self.config['is_show_curve']:
                     print(f'曲线点数: {len(curve)}')
                 for i in range(1, len(curve)):
@@ -2317,21 +2220,20 @@ class Valorant:
                     if x == 0 and y == 0:
                         continue
                     self._emit_move_rel(x, y)
-        else:  # inserted
-            if self.config['is_curve_uniform'] and self.AimController.is_uniform_motion(self.config['show_motion_speed']):
-                curve = HumanCurve((0, 0), (round(relative_move_x), round(relative_move_y)), offsetBoundaryX=self.config['offset_boundary_x'], offsetBoundaryY=self.config['offset_boundary_y'], knotsCount=self.config['knots_count'], distortionMean=self.config['distortion_mean'], distortionStdev=self.config['distortion_st_dev'], distortionFrequency=self.config['distortion_frequency'], targetPoints=self.config['target_points'])
-                curve = curve.points
-                if isinstance(curve, tuple):
-                    self._emit_move_rel(relative_move_x, relative_move_y)
-                else:  # inserted
-                    if self.config['is_show_curve']:
-                        print(f'曲线点数: {len(curve)}')
-                    for i in range(1, len(curve)):
-                        x = round(curve[i][0] - curve[i - 1][0])
-                        y = round(curve[i][1] - curve[i - 1][1])
-                        self._emit_move_rel(x, y)
-            else:  # inserted
+        elif self.config['is_curve_uniform'] and self.AimController.is_uniform_motion(self.config['show_motion_speed']):
+            curve = HumanCurve((0, 0), (round(relative_move_x), round(relative_move_y)), offsetBoundaryX=self.config['offset_boundary_x'], offsetBoundaryY=self.config['offset_boundary_y'], knotsCount=self.config['knots_count'], distortionMean=self.config['distortion_mean'], distortionStdev=self.config['distortion_st_dev'], distortionFrequency=self.config['distortion_frequency'], targetPoints=self.config['target_points'])
+            curve = curve.points
+            if isinstance(curve, tuple):
                 self._emit_move_rel(relative_move_x, relative_move_y)
+            else:
+                if self.config['is_show_curve']:
+                    print(f'曲线点数: {len(curve)}')
+                for i in range(1, len(curve)):
+                    x = round(curve[i][0] - curve[i - 1][0])
+                    y = round(curve[i][1] - curve[i - 1][1])
+                    self._emit_move_rel(x, y)
+        else:
+            self._emit_move_rel(relative_move_x, relative_move_y)
 
     def _harmonize_v8_boxes(self, boxes, input_w, input_h):
         """
@@ -2387,7 +2289,7 @@ class Valorant:
         is_v8 = bool(group_cfg.get('is_v8', False) or is_v11_variant)
         if is_v8:
             class_num = self.engine.get_class_num_v8()
-        else:  # inserted
+        else:
             class_num = self.engine.get_class_num()
         input_shape_weight = self.engine.get_input_shape()[3]
         input_shape_height = self.engine.get_input_shape()[2]
@@ -2474,7 +2376,7 @@ class Valorant:
             if pred.ndim == 1:
                 if is_v8:
                     C = self.engine.get_class_num_v8() + 4
-                else:  # inserted
+                else:
                     C = self.engine.get_class_num() + 5
                 if pred.size % C!= 0:
                     raise ValueError(f'推理输出长度{pred.size}不能整除每行特征数{C}，请检查模型！')
@@ -2495,7 +2397,7 @@ class Valorant:
             if not class_confidence_thresholds:
                 confidence_threshold = self.pressed_key_config.get('confidence_threshold', 0.5)
                 iou_t = self.pressed_key_config.get('iou_t', 1.0)
-            else:  # inserted
+            else:
                 confidence_threshold = min_confidence_threshold
                 iou_t = min(class_iou_thresholds.values()) if class_iou_thresholds else 1.0
             t3 = time.perf_counter()
@@ -2508,7 +2410,7 @@ class Valorant:
                     # 单类 v11 场景下关闭自适应 NMS，减少框抖动与漏检。
                     adaptive_nms_enabled = False
                 boxes, scores, classes = nms_v8(pred, confidence_threshold, iou_t, adaptive_nms_enabled)
-            else:  # inserted
+            else:
                 boxes, scores, classes = nms(pred, confidence_threshold, iou_t, class_num)
             if is_v8 and len(boxes) > 0:
                 boxes = self._harmonize_v8_boxes(
@@ -2527,7 +2429,7 @@ class Valorant:
             if len(boxes) > 0:
                 if is_v8:
                     all_class_ids = classes.astype(int)
-                else:  # inserted
+                else:
                     all_class_ids = np.argmax(classes, axis=1).astype(int)
                 if selected_classes_set:
                     mask = np.array([cls_id in selected_classes_set for cls_id in all_class_ids], dtype=bool)
@@ -2550,7 +2452,7 @@ class Valorant:
                             if 'aim_boxes' in locals() and isinstance(aim_boxes, np.ndarray):
                                 aim_boxes = aim_boxes[confidence_mask]
                             class_ids = [class_ids[i] for i, keep in enumerate(confidence_mask) if keep]
-                else:  # inserted
+                else:
                     boxes = []
                     scores = []
                     classes = []
@@ -2559,19 +2461,16 @@ class Valorant:
             if self.config['auto_flashbang']['enabled'] and len(boxes) > 0 and (len(class_ids) > 0):
                 if self.is_using_dopa_model():
                     self.detect_and_handle_flashbang(boxes, class_ids, input_shape_weight, input_shape_height, scores)
-                else:  # inserted
-                    if 4 in class_ids and (not hasattr(self, '_dopa_warning_shown')):
-                        print('自动背闪功能仅支持ZTX模型，当前模型不支持')
+                elif 4 in class_ids and (not hasattr(self, '_dopa_warning_shown')):
+                    print('自动背闪功能仅支持ZTX模型，当前模型不支持')
+                    self._dopa_warning_shown = True
+            elif self.config['auto_flashbang']['enabled']:
+                if len(class_ids) > 0 and 4 in class_ids:
+                    if self.is_using_dopa_model():
+                        print('检测到类别4，但boxes为空或过滤后为空')
+                    elif not hasattr(self, '_dopa_warning_shown'):
+                        print('自动背闪功能仅支持ZTX模型')
                         self._dopa_warning_shown = True
-            else:  # inserted
-                if self.config['auto_flashbang']['enabled']:
-                    if len(class_ids) > 0 and 4 in class_ids:
-                        if self.is_using_dopa_model():
-                            print('检测到类别4，但boxes为空或过滤后为空')
-                        else:  # inserted
-                            if not hasattr(self, '_dopa_warning_shown'):
-                                print('自动背闪功能仅支持ZTX模型')
-                                self._dopa_warning_shown = True
             if len(boxes) > 0:
                 if self.aim_key_status:
                     try:
@@ -2602,7 +2501,7 @@ class Valorant:
             if infer_debug and self.screenshot_manager and (frame_count % 3 == 0):
                 if self.aim_key_status:
                     current_key = self.old_pressed_aim_key
-                else:  # inserted
+                else:
                     current_key = self.select_key if hasattr(self, 'select_key') and self.select_key else self.old_pressed_aim_key
                 current_scope = 0
                 if current_key and current_key in self.config['groups'][self.group]['aim_keys']:
@@ -2633,8 +2532,8 @@ class Valorant:
                     else:
                         try:
                             final_screenshot = cv2.resize(self.crosshair_debug_mask, (screenshot.shape[1], screenshot.shape[0]))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            print(f'debug mask resize失败: {e}')
 
                 self.screenshot_manager.put_screenshot_result(
                     final_screenshot,
@@ -2728,7 +2627,7 @@ class Valorant:
         return float(self._dynamic_scope['value'])
 
     def get_dynamic_aim_scope(self):
-        """对外获取当前帧应使用的瞄准范围（像素）。"""  # inserted
+        """对外获取当前帧应使用的瞄准范围（像素）。"""
         try:
             return self._update_dynamic_aim_scope()
         except Exception:
@@ -2738,7 +2637,7 @@ class Valorant:
                 return 0.0
 
     def reset_dynamic_aim_scope(self, for_key=None):
-        """当开启动态瞄准范围时，将当前范围重置为该按键的基础范围。\n\n        Args:\n            for_key: 指定按键名称；缺省则使用当前生效按键。\n        """  # inserted
+        """当开启动态瞄准范围时，将当前范围重置为该按键的基础范围。\n\n        Args:\n            for_key: 指定按键名称；缺省则使用当前生效按键。\n        """
         try:
             key = for_key or (self.old_pressed_aim_key if self.old_pressed_aim_key else self.select_key)
             key_cfg = self.config['groups'][self.group]['aim_keys'].get(key, self.pressed_key_config)
@@ -2756,7 +2655,7 @@ class Valorant:
         self._dynamic_scope['last_ms'] = time.time() * 1000.0
 
     def save_config_callback(self):
-        """异步保存配置回调"""  # inserted
+        """异步保存配置回调"""
 
         def _async_save_callback():
             try:
@@ -2836,10 +2735,10 @@ class Valorant:
         return metadata
 
     def build_config(self):
-        """\n        构建配置并返回相关参数\n        \n        处理TRT相关路径设置并获取当前组的按键配置\n        \n        Returns:\n            tuple: (config, aim_keys_dist, aim_keys, group) 配置字典、按键配置字典、按键列表和当前组名\n        """  # inserted
+        """\n        构建配置并返回相关参数\n        \n        处理TRT相关路径设置并获取当前组的按键配置\n        \n        Returns:\n            tuple: (config, aim_keys_dist, aim_keys, group) 配置字典、按键配置字典、按键列表和当前组名\n        """
         if hasattr(self, 'config') and self.config:
             config = self.config
-        else:  # inserted
+        else:
             # 跳过远程配置验证，直接读取本地cfg.json
             print('跳过远程配置验证，直接读取本地cfg.json')
             config = self.read_local_cfg()
@@ -2907,12 +2806,10 @@ class Valorant:
                     onnx_path = os.path.splitext(current_model)[0] + '.onnx'
                     if os.path.exists(onnx_path):
                         group_val['original_infer_model'] = onnx_path
-                else:  # inserted
-                    if current_model.endswith('.onnx'):
-                        group_val['original_infer_model'] = current_model
-                    else:  # inserted
-                        if current_model.endswith('.ZTX'):
-                            group_val['original_infer_model'] = current_model
+                elif current_model.endswith('.onnx'):
+                    group_val['original_infer_model'] = current_model
+                elif current_model.endswith('.ZTX'):
+                    group_val['original_infer_model'] = current_model
             if group_val.get('is_trt', False):
                 if not TENSORRT_AVAILABLE:
                     print(f'组 {group_key} 已设置使用TRT，但TensorRT环境不可用，自动切换为原始模式')
@@ -2921,31 +2818,29 @@ class Valorant:
                     if original_path.endswith('.ZTX'):
                         if original_path!= group_val['infer_model'] and os.path.exists(original_path):
                             group_val['infer_model'] = original_path
-                    else:  # inserted
-                        if original_path!= group_val['infer_model'] and os.path.exists(original_path):
-                            group_val['infer_model'] = original_path
-                            print(f'已自动切回ONNX模式: {original_path}')
-                else:  # inserted
+                    elif original_path!= group_val['infer_model'] and os.path.exists(original_path):
+                        group_val['infer_model'] = original_path
+                        print(f'已自动切回ONNX模式: {original_path}')
+                else:
                     original_path = group_val.get('original_infer_model', group_val['infer_model'])
                     if original_path.endswith('.ZTX'):
                         engine_path = os.path.splitext(original_path)[0] + '.engine'
                         if os.path.exists(engine_path):
                             group_val['infer_model'] = engine_path
-                        else:  # inserted
-                            if original_path!= group_val['infer_model'] and os.path.exists(original_path):
-                                group_val['infer_model'] = original_path
-                    else:  # inserted
+                        elif original_path!= group_val['infer_model'] and os.path.exists(original_path):
+                            group_val['infer_model'] = original_path
+                    else:
                         engine_path = os.path.splitext(original_path)[0] + '.engine'
                         if os.path.exists(engine_path):
                             group_val['infer_model'] = engine_path
-                        else:  # inserted
+                        else:
                             print(f'警告: TRT引擎文件不存在: {engine_path}')
                             if original_path!= group_val['infer_model'] and os.path.exists(original_path):
                                 group_val['infer_model'] = original_path
                                 group_val['is_trt'] = False
                                 print(f'已自动切回ONNX模式: {original_path}')
                             continue
-            else:  # inserted
+            else:
                 original_path = group_val.get('original_infer_model', group_val['infer_model'])
                 if original_path.endswith('.ZTX'):
                     continue
@@ -2968,13 +2863,13 @@ class Valorant:
             aim_keys = list(aim_keys_dist.keys())
             self.migrate_config_to_class_based(config)
             self.init_all_keys_class_aim_positions(group, config)
-        else:  # inserted
+        else:
             aim_keys_dist = {}
             aim_keys = []
         return (config, aim_keys_dist, aim_keys, group)
 
     def init_all_keys_class_aim_positions(self, group, config):
-        """为所有按键初始化类别瞄准位置配置"""  # inserted
+        """为所有按键初始化类别瞄准位置配置"""
         try:
             old_group = getattr(self, 'group', None)
             self.group = group
@@ -2990,12 +2885,11 @@ class Valorant:
                     for idx, item in enumerate(cap):
                         if isinstance(item, dict):
                             converted[str(idx)] = {'aim_bot_position': float(item.get('aim_bot_position', 0.0)), 'aim_bot_position2': float(item.get('aim_bot_position2', 0.0)), 'confidence_threshold': float(item.get('confidence_threshold', 0.5)), 'iou_t': float(item.get('iou_t', 1.0))}
-                        else:  # inserted
+                        else:
                             converted[str(idx)] = {'aim_bot_position': 0.0, 'aim_bot_position2': 0.0, 'confidence_threshold': 0.5, 'iou_t': 1.0}
                     key_config['class_aim_positions'] = converted
-                else:  # inserted
-                    if not isinstance(cap, dict):
-                        key_config['class_aim_positions'] = {}
+                elif not isinstance(cap, dict):
+                    key_config['class_aim_positions'] = {}
                 if 'class_priority_order' not in key_config:
                     key_config['class_priority_order'] = list(range(class_num))
                 if 'overshoot_threshold' not in key_config:
@@ -3016,7 +2910,7 @@ class Valorant:
             traceback.print_exc()
 
     def migrate_config_to_class_based(self, config):
-        """迁移配置：将全局的置信阈值和IOU配置迁移到基于类别的配置"""  # inserted
+        """迁移配置：将全局的置信阈值和IOU配置迁移到基于类别的配置"""
         try:
             for group_name, group_config in config.get('groups', {}).items():
                 for key_name, key_config in group_config.get('aim_keys', {}).items():
@@ -3029,10 +2923,9 @@ class Valorant:
                         if isinstance(class_aim_positions, list):
                             key_config['class_aim_positions'] = {}
                             class_aim_positions = {}
-                        else:  # inserted
-                            if not isinstance(class_aim_positions, dict):
-                                key_config['class_aim_positions'] = {}
-                                class_aim_positions = {}
+                        elif not isinstance(class_aim_positions, dict):
+                            key_config['class_aim_positions'] = {}
+                            class_aim_positions = {}
                         for class_str, class_config in class_aim_positions.items():
                             if isinstance(class_config, dict):
                                 if old_conf_thresh is not None and 'confidence_threshold' not in class_config:
@@ -3070,12 +2963,12 @@ class Valorant:
             self.aim_pipeline.tracker_enabled = bool(self.pressed_key_config.get('tracker_enabled', True))
             try:
                 self.aim_pipeline.tracker.match_thresh = float(self.pressed_key_config.get('tracker_match_thresh', 0.3))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f'tracker match_thresh同步失败: {e}')
             try:
                 self.aim_pipeline.tracker.track_buffer = int(self.pressed_key_config.get('tracker_track_buffer', 30))
-            except Exception:
-                pass
+            except Exception as e:
+                print(f'tracker track_buffer同步失败: {e}')
             # 同步移动预测 & ID锁定参数
             kalman_cfg = self.config.get('kalman', {})
             self.aim_pipeline.kalman_enabled = bool(kalman_cfg.get('enabled', True))
@@ -3083,7 +2976,7 @@ class Valorant:
             self.aim_pipeline.target_id_lock_enabled = bool(self.config.get('target_id_lock_enabled', True))
 
     def refresh_pressed_key_config(self, key):
-        """\n        刷新当前按下按键的配置\n        \n        Args:\n            key: 按键名称\n        """  # inserted
+        """\n        刷新当前按下按键的配置\n        \n        Args:\n            key: 按键名称\n        """
         if key!= self.old_refreshed_aim_key:
             if key not in self.aim_keys_dist:
                 return
@@ -3094,7 +2987,7 @@ class Valorant:
             self.refresh_controller_params()
 
     def get_aim_position_for_class(self, class_id):
-        """根据类别ID获取瞄准位置"""  # inserted
+        """根据类别ID获取瞄准位置"""
         if 'class_aim_positions' not in self.pressed_key_config:
             return random.uniform(self.pressed_key_config.get('aim_bot_position', 0.5), self.pressed_key_config.get('aim_bot_position2', 0.5))
         class_str = str(class_id)
@@ -3106,82 +2999,70 @@ class Valorant:
     def mouse_left_down(self):
         if self.config['move_method'] == 'dhz':
             self.dhz.left(1)
-        else:  # inserted
-            if self.config['move_method'] == 'pnmh':
-                self.pnmh.LeftDown()
+        elif self.config['move_method'] == 'pnmh':
+            self.pnmh.LeftDown()
         if self.config['move_method'] == 'km_net':
             kmNet.left(1)
-        else:  # inserted
-            if self.config['move_method'] == 'km_box_a':
-                self.move_dll.KM_left(ctypes.c_char(1))
-            else:  # inserted
-                if self.config['move_method'] == 'send_input':
-                    pydirectinput.mouseDown(button='left')
-                else:  # inserted
-                    if self.config['move_method'] == 'logitech':
-                        self.move_dll.mouse_down(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'makcu':
-                            if self.makcu is not None:
-                                max_retries = 3
-                                for retry in range(max_retries):
-                                    try:
-                                        self.makcu.left(1)
-                                        return
-                                    except Exception as e:
-                                        if retry == max_retries - 1:
-                                            print(f'Makcu点击失败: {e}')
-                                            try:
-                                                self.makcu.disconnect()
-                                                time.sleep(0.1)
-                                                self.makcu.connect()
-                                            except:
-                                                pass
-                                        else:  # inserted
-                                            time.sleep(0.1)
-                        else:  # inserted
-                            if self.config['move_method'] == 'catbox':
-                                catbox_left_down()
+        elif self.config['move_method'] == 'km_box_a':
+            self.move_dll.KM_left(ctypes.c_char(1))
+        elif self.config['move_method'] == 'send_input':
+            pydirectinput.mouseDown(button='left')
+        elif self.config['move_method'] == 'logitech':
+            self.move_dll.mouse_down(1)
+        elif self.config['move_method'] == 'makcu':
+            if self.makcu is not None:
+                max_retries = 3
+                for retry in range(max_retries):
+                    try:
+                        self.makcu.left(1)
+                        return
+                    except Exception as e:
+                        if retry == max_retries - 1:
+                            print(f'Makcu点击失败: {e}')
+                            try:
+                                self.makcu.disconnect()
+                                time.sleep(0.1)
+                                self.makcu.connect()
+                            except Exception as e:
+                                print(f'Makcu点击后重连失败: {e}')
+                        else:
+                            time.sleep(0.1)
+        elif self.config['move_method'] == 'catbox':
+            catbox_left_down()
 
     def mouse_left_up(self):
         if self.config['move_method'] == 'dhz':
             self.dhz.left(0)
-        else:  # inserted
-            if self.config['move_method'] == 'pnmh':
-                self.pnmh.LeftUp()
+        elif self.config['move_method'] == 'pnmh':
+            self.pnmh.LeftUp()
         if self.config['move_method'] == 'km_net':
             kmNet.left(0)
-        else:  # inserted
-            if self.config['move_method'] == 'km_box_a':
-                self.move_dll.KM_left(ctypes.c_char(0))
-            else:  # inserted
-                if self.config['move_method'] == 'send_input':
-                    pydirectinput.mouseUp(button='left')
-                else:  # inserted
-                    if self.config['move_method'] == 'logitech':
-                        self.move_dll.mouse_up(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'makcu':
-                            if self.makcu is not None:
-                                max_retries = 3
-                                for retry in range(max_retries):
-                                    try:
-                                        self.makcu.left(0)
-                                        return
-                                    except Exception as e:
-                                        if retry == max_retries - 1:
-                                            print(f'Makcu释放失败: {e}')
-                                            try:
-                                                self.makcu.disconnect()
-                                                time.sleep(0.1)
-                                                self.makcu.connect()
-                                            except:
-                                                pass
-                                        else:  # inserted
-                                            time.sleep(0.1)
-                        else:  # inserted
-                            if self.config['move_method'] == 'catbox':
-                                catbox_left_up()
+        elif self.config['move_method'] == 'km_box_a':
+            self.move_dll.KM_left(ctypes.c_char(0))
+        elif self.config['move_method'] == 'send_input':
+            pydirectinput.mouseUp(button='left')
+        elif self.config['move_method'] == 'logitech':
+            self.move_dll.mouse_up(1)
+        elif self.config['move_method'] == 'makcu':
+            if self.makcu is not None:
+                max_retries = 3
+                for retry in range(max_retries):
+                    try:
+                        self.makcu.left(0)
+                        return
+                    except Exception as e:
+                        if retry == max_retries - 1:
+                            print(f'Makcu释放失败: {e}')
+                            try:
+                                self.makcu.disconnect()
+                                time.sleep(0.1)
+                                self.makcu.connect()
+                            except Exception as e:
+                                print(f'Makcu释放后重连失败: {e}')
+                        else:
+                            time.sleep(0.1)
+        elif self.config['move_method'] == 'catbox':
+            catbox_left_up()
 
     def trigger_process(self, start_delay=0, press_delay=1, end_delay=0, random_delay=0, recoil_enabled=False):
         self.time_begin_period(1)
@@ -3206,14 +3087,14 @@ class Valorant:
         self.trigger_status = False
 
     def continuous_trigger_process(self, recoil_enabled=False):
-        """持续扳机处理函数 - 一直开枪直到按键松开"""  # inserted
+        """持续扳机处理函数 - 一直开枪直到按键松开"""
         self.time_begin_period(1)
         start_delay = self.pressed_key_config['trigger']['start_delay']
         random_delay = self.pressed_key_config['trigger']['random_delay']
         if start_delay > 0:
             if random_delay > 0:
                 actual_start_delay = random.randint(max(0, start_delay - random_delay), start_delay + random_delay)
-            else:  # inserted
+            else:
                 actual_start_delay = start_delay
             time.sleep(actual_start_delay / 1000)
         self.mouse_left_down()
@@ -3222,19 +3103,19 @@ class Valorant:
         try:
             while self.aim_key_status and self.continuous_trigger_active:
                 time.sleep(0.01)
-        finally:  # inserted
+        finally:
             self.mouse_left_up()
             if recoil_enabled:
                 self.stop_trigger_recoil()
             self.continuous_trigger_active = False
 
     def stop_continuous_trigger(self):
-        """停止持续扳机"""  # inserted
+        """停止持续扳机"""
         if self.continuous_trigger_active:
             self.continuous_trigger_active = False
 
     def start_trigger_recoil(self):
-        """启动扳机压枪"""  # inserted
+        """启动扳机压枪"""
         if self.trigger_recoil_active:
             return
         if self.config.get('recoil', {}).get('use_mouse_re_trajectory', False):
@@ -3257,7 +3138,7 @@ class Valorant:
             self.timer_id2 = self.time_set_event(self.delay, 1, self.down, 0, 1)
 
     def stop_trigger_recoil(self):
-        """停止扳机压枪"""  # inserted
+        """停止扳机压枪"""
         if self.trigger_recoil_active:
             self.trigger_recoil_active = False
             if self._recoil_is_replaying:
@@ -3316,10 +3197,9 @@ class Valorant:
                                 self.continuous_trigger_thread = Thread(target=self.continuous_trigger_process, args=(recoil_enabled,))
                                 self.continuous_trigger_thread.daemon = True
                                 self.continuous_trigger_thread.start()
-                        else:  # inserted
-                            if not self.trigger_status and self.aim_key_status:
-                                self.trigger_status = True
-                                Thread(target=self.trigger_process, args=(self.pressed_key_config['trigger']['start_delay'], self.pressed_key_config['trigger']['press_delay'], self.pressed_key_config['trigger']['end_delay'], self.pressed_key_config['trigger']['random_delay'], recoil_enabled)).start()
+                        elif not self.trigger_status and self.aim_key_status:
+                            self.trigger_status = True
+                            Thread(target=self.trigger_process, args=(self.pressed_key_config['trigger']['start_delay'], self.pressed_key_config['trigger']['press_delay'], self.pressed_key_config['trigger']['end_delay'], self.pressed_key_config['trigger']['random_delay'], recoil_enabled)).start()
                         break
 
     def reset_pid(self):
@@ -3332,7 +3212,7 @@ class Valorant:
         self.stop_trigger_recoil()
 
     def get_system_dpi_scale(self):
-        """获取系统DPI缩放比例"""  # inserted
+        """获取系统DPI缩放比例"""
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
             hdc = ctypes.windll.user32.GetDC(0)
@@ -3346,7 +3226,7 @@ class Valorant:
             return 1.0
 
     def get_dpi_aware_screen_size(self):
-        """获取DPI感知的实际可用屏幕尺寸"""  # inserted
+        """获取DPI感知的实际可用屏幕尺寸"""
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
             import tkinter as tk
@@ -3366,7 +3246,7 @@ class Valorant:
         self.update_target_reference_class_combo()
 
     def update_target_reference_class_combo(self):
-        """更新目标参考类别下拉框选项"""  # inserted
+        """更新目标参考类别下拉框选项"""
         if not hasattr(self, 'target_reference_class_combo') or self.target_reference_class_combo is None:
             return None
         try:
@@ -3383,7 +3263,7 @@ class Valorant:
             print(f'更新目标参考类别下拉框失败: {e}')
 
     def get_gradient_color(base_color, step):
-        """ 根据基色生成颜色渐变 """  # inserted
+        """ 根据基色生成颜色渐变 """
         r, g, b, a = base_color
         factor = 1 + step
         r = min(int(r * factor), 255)
@@ -3914,43 +3794,48 @@ class Valorant:
                         print('从内存数据转换TRT引擎...')
                         if ensure_engine_from_memory is not None:
                             final_engine_path = ensure_engine_from_memory(self.decrypted_model_data, engine_path, target_hw=None)
-                        else:  # inserted
+                        else:
                             print('TensorRT模块未加载，无法转换引擎')
                             self.config['groups'][self.group]['is_trt'] = False
                             dpg.set_value(self.is_trt_checkbox, False)
+                            dpg.set_value('output_text', 'TensorRT模块未加载，使用ONNX模式')
                             return
                         if os.path.exists(final_engine_path):
                             print(f'TRT引擎转换成功: {final_engine_path}')
                             self.config['groups'][self.group]['infer_model'] = final_engine_path
                             dpg.set_value(self.infer_model_input, final_engine_path)
-                        else:  # inserted
+                            dpg.set_value('output_text', 'TRT引擎转换成功')
+                        else:
                             print('TRT引擎转换失败，将使用原始模型')
                             self.config['groups'][self.group]['is_trt'] = False
                             dpg.set_value(self.is_trt_checkbox, False)
-                    else:  # inserted
-                        if current_model.endswith('.onnx'):
-                            print('从ONNX文件转换TRT引擎...')
-                            from inference_engine import auto_convert_engine
-                            if auto_convert_engine(current_model):
-                                print(f'TRT引擎转换成功: {engine_path}')
-                                self.config['groups'][self.group]['infer_model'] = engine_path
-                                dpg.set_value(self.infer_model_input, engine_path)
-                            else:  # inserted
-                                print('TRT引擎转换失败，将使用原始模型')
-                                self.config['groups'][self.group]['is_trt'] = False
-                                dpg.set_value(self.is_trt_checkbox, False)
-                else:  # inserted
+                            dpg.set_value('output_text', 'TRT引擎转换失败，使用ONNX模式')
+                    elif current_model.endswith('.onnx'):
+                        print('从ONNX文件转换TRT引擎...')
+                        from inference_engine import auto_convert_engine
+                        if auto_convert_engine(current_model):
+                            print(f'TRT引擎转换成功: {engine_path}')
+                            self.config['groups'][self.group]['infer_model'] = engine_path
+                            dpg.set_value(self.infer_model_input, engine_path)
+                            dpg.set_value('output_text', 'TRT引擎转换成功')
+                        else:
+                            print('TRT引擎转换失败，将使用原始模型')
+                            self.config['groups'][self.group]['is_trt'] = False
+                            dpg.set_value(self.is_trt_checkbox, False)
+                            dpg.set_value('output_text', 'TRT引擎转换失败，使用ONNX模式')
+                else:
                     print(f'找到现有引擎文件: {engine_path}')
                     self.config['groups'][self.group]['infer_model'] = engine_path
                     dpg.set_value(self.infer_model_input, engine_path)
+                    dpg.set_value('output_text', 'TRT引擎已就绪')
             model_path = self.config['groups'][self.group]['infer_model']
             if model_path.endswith('.ZTX'):
                 self._update_class_checkboxes()
             if self.go():
                 dpg.configure_item(sender, label='停止')
-            else:  # inserted
+            else:
                 dpg.configure_item(sender, label='启动')
-        else:  # inserted
+        else:
             dpg.configure_item(sender, label='别点我!!!')
             self.running = False
             if self.timer_id!= 0:
@@ -4030,7 +3915,7 @@ class Valorant:
         return 1.0
 
     def update_mouse_re_ui_status(self):
-        """刷新mouse_re状态面板"""  # inserted
+        """刷新mouse_re状态面板"""
         try:
             switch_text = '开' if self.config.get('recoil', {}).get('use_mouse_re_trajectory', False) and getattr(self, 'down_switch', False) else '关'
             key = f"{getattr(self, 'mouse_re_picked_game', '')}:{getattr(self, 'mouse_re_picked_gun', '')}"
@@ -4058,7 +3943,7 @@ class Valorant:
             traceback.print_exc()
 
     def on_use_mouse_re_trajectory_change(self, sender, app_data):
-        """启用/禁用 mouse_re 轨迹压枪"""  # inserted
+        """启用/禁用 mouse_re 轨迹压枪"""
         try:
             enabled = bool(app_data)
             self.config['recoil']['use_mouse_re_trajectory'] = enabled
@@ -4068,7 +3953,7 @@ class Valorant:
             print(f'更新mouse_re轨迹压枪开关失败: {e}')
 
     def on_mouse_re_replay_speed_change(self, sender, app_data):
-        """更新mouse_re轨迹回放速度"""  # inserted
+        """更新mouse_re轨迹回放速度"""
         try:
             speed = float(app_data)
             if speed <= 0:
@@ -4079,7 +3964,7 @@ class Valorant:
             print(f'更新mouse_re回放速度失败: {e}')
 
     def on_mouse_re_pixel_enhancement_change(self, sender, app_data):
-        """更新mouse_re轨迹像素增强比例"""  # inserted
+        """更新mouse_re轨迹像素增强比例"""
         try:
             ratio = float(app_data)
             if ratio <= 0:
@@ -4090,7 +3975,7 @@ class Valorant:
             print(f'更新mouse_re像素增强比例失败: {e}')
 
     def on_import_mouse_re_trajectory_click(self, sender, app_data):
-        """为mouse_re选择的游戏/枪械导入轨迹文件"""  # inserted
+        """为mouse_re选择的游戏/枪械导入轨迹文件"""
         try:
             if not self.mouse_re_picked_game or not self.mouse_re_picked_gun:
                 print('[mouse_re] 请先选择游戏和枪械')
@@ -4112,7 +3997,7 @@ class Valorant:
             print(f'导入mouse_re轨迹失败: {e}')
 
     def on_clear_mouse_re_mapping_click(self, sender, app_data):
-        """清除mouse_re选择的游戏/枪械的映射"""  # inserted
+        """清除mouse_re选择的游戏/枪械的映射"""
         try:
             if not self.mouse_re_picked_game or not self.mouse_re_picked_gun:
                 print('[mouse_re] 请先选择游戏和枪械')
@@ -4149,7 +4034,7 @@ class Valorant:
             traceback.print_exc()
 
     def _parse_mouse_re_json(self, path):
-        """解析 mouse_re.py 保存的JSON，转换为增量(dx,dy,dt_ms)序列"""  # inserted
+        """解析 mouse_re.py 保存的JSON，转换为增量(dx,dy,dt_ms)序列"""
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -4195,7 +4080,7 @@ class Valorant:
             traceback.print_exc()
 
     def _start_mouse_re_recoil(self):
-        """启动 mouse_re 轨迹回放线程"""  # inserted
+        """启动 mouse_re 轨迹回放线程"""
         if self._recoil_is_replaying:
             return
         if self.config['groups'][self.group]['right_down'] and (not self.right_pressed):
@@ -4210,11 +4095,11 @@ class Valorant:
         self._recoil_replay_thread.start()
 
     def _stop_mouse_re_recoil(self):
-        """停止 mouse_re 轨迹回放"""  # inserted
+        """停止 mouse_re 轨迹回放"""
         self._recoil_is_replaying = False
 
     def _recoil_replay_worker(self, points):
-        """在后台按时间序列回放相对位移"""  # inserted
+        """在后台按时间序列回放相对位移"""
         try:
             speed = float(self.config.get('recoil', {}).get('replay_speed', 1.0))
             speed = 1.0 if speed <= 0 else speed
@@ -4254,11 +4139,11 @@ class Valorant:
                     remaining -= chunk
         except Exception as e:
             print(f'mouse_re回放线程错误: {e}')
-        finally:  # inserted
+        finally:
             self._recoil_is_replaying = False
 
     def render_mouse_re_games_combo(self):
-        """渲染mouse_re游戏选择下拉框"""  # inserted
+        """渲染mouse_re游戏选择下拉框"""
         try:
             if self.mouse_re_games_combo is not None:
                 dpg.delete_item(self.mouse_re_games_combo)
@@ -4266,7 +4151,7 @@ class Valorant:
             if not isinstance(games_config, dict):
                 print(f'[警告] games配置不是字典: {type(games_config)}')
                 games = []
-            else:  # inserted
+            else:
                 games = list(games_config.keys())
             if not self.mouse_re_picked_game or self.mouse_re_picked_game not in games:
                 self.mouse_re_picked_game = games[0] if games else ''
@@ -4277,7 +4162,7 @@ class Valorant:
             traceback.print_exc()
 
     def render_mouse_re_guns_combo(self):
-        """渲染mouse_re枪械选择下拉框"""  # inserted
+        """渲染mouse_re枪械选择下拉框"""
         try:
             if self.mouse_re_guns_combo is not None:
                 dpg.delete_item(self.mouse_re_guns_combo)
@@ -4287,11 +4172,11 @@ class Valorant:
             games_config = self.config.get('games', {})
             if not isinstance(games_config, dict) or self.mouse_re_picked_game not in games_config:
                 guns = []
-            else:  # inserted
+            else:
                 game_guns = games_config[self.mouse_re_picked_game]
                 if isinstance(game_guns, dict):
                     guns = list(game_guns.keys())
-                else:  # inserted
+                else:
                     guns = []
             if not self.mouse_re_picked_gun or self.mouse_re_picked_gun not in guns:
                 self.mouse_re_picked_gun = guns[0] if guns else ''
@@ -4302,7 +4187,7 @@ class Valorant:
             traceback.print_exc()
 
     def on_mouse_re_games_change(self, sender, app_data):
-        """mouse_re游戏选择改变"""  # inserted
+        """mouse_re游戏选择改变"""
         self.mouse_re_picked_game = app_data
         self.mouse_re_picked_gun = ''
         self.render_mouse_re_guns_combo()
@@ -4310,7 +4195,7 @@ class Valorant:
         self.update_mouse_re_ui_status()
 
     def on_mouse_re_guns_change(self, sender, app_data):
-        """mouse_re枪械选择改变"""  # inserted
+        """mouse_re枪械选择改变"""
         self.mouse_re_picked_gun = app_data
         self._current_mouse_re_points = self._load_mouse_re_trajectory_for_current()
         self.update_mouse_re_ui_status()
@@ -4353,9 +4238,9 @@ class Valorant:
                 import dearpygui.dearpygui as dpg
                 if dpg.does_item_exist('auto_flashbang_enabled_checkbox'):
                     dpg.set_value('auto_flashbang_enabled_checkbox', False)
-            except:
+            except Exception:
                 return None
-        else:  # inserted
+        else:
             self.config['auto_flashbang']['enabled'] = app_data
             print(f"自动背闪已{('启用' if app_data else '禁用')}")
 
@@ -4388,7 +4273,7 @@ class Valorant:
         print(f'背闪回转延迟设置为: {app_data}ms')
 
     def on_test_flashbang_left(self, sender, app_data):
-        """测试左转背闪"""  # inserted
+        """测试左转背闪"""
         if not self.is_using_dopa_model():
             print('自动背闪功能仅支持ZTX模型，当前模型不支持')
             return
@@ -4396,7 +4281,7 @@ class Valorant:
         self.execute_flashbang_turn((-1))
 
     def on_test_flashbang_right(self, sender, app_data):
-        """测试右转背闪"""  # inserted
+        """测试右转背闪"""
         if not self.is_using_dopa_model():
             print('自动背闪功能仅支持ZTX模型，当前模型不支持')
             return
@@ -4439,7 +4324,7 @@ class Valorant:
         print(f'背闪最小尺寸设置为: {app_data}像素')
 
     def on_flashbang_debug_info(self, sender, app_data):
-        """显示自动背闪调试信息"""  # inserted
+        """显示自动背闪调试信息"""
         import time
         print('=== 自动背闪调试信息 ===')
         print(f"功能状态: {('启用' if self.config['auto_flashbang']['enabled'] else '禁用')}")
@@ -4461,7 +4346,7 @@ class Valorant:
         print('=====================')
 
     def update_auto_flashbang_ui_state(self):
-        """更新自动背闪UI控件的启用/禁用状态"""  # inserted
+        """更新自动背闪UI控件的启用/禁用状态"""
         try:
             import dearpygui.dearpygui as dpg
             is_dopa = self.is_using_dopa_model()
@@ -4767,16 +4652,14 @@ class Valorant:
         if app_data!= '' and os.path.exists(app_data):
             if app_data.endswith('.onnx'):
                 self.config['groups'][self.group]['original_infer_model'] = app_data
-            else:  # inserted
-                if app_data.endswith('.ZTX') or app_data.endswith('.ZTX'):
-                    self.config['groups'][self.group]['original_infer_model'] = app_data
-                else:  # inserted
-                    if app_data.endswith('.engine'):
-                        onnx_path = os.path.splitext(app_data)[0] + '.onnx'
-                        if os.path.exists(onnx_path):
-                            self.config['groups'][self.group]['original_infer_model'] = onnx_path
-                        else:  # inserted
-                            print(f'警告：找不到对应的ONNX模型：{onnx_path}，TRT模式切换可能不正常')
+            elif app_data.endswith('.ZTX') or app_data.endswith('.ZTX'):
+                self.config['groups'][self.group]['original_infer_model'] = app_data
+            elif app_data.endswith('.engine'):
+                onnx_path = os.path.splitext(app_data)[0] + '.onnx'
+                if os.path.exists(onnx_path):
+                    self.config['groups'][self.group]['original_infer_model'] = onnx_path
+                else:
+                    print(f'警告：找不到对应的ONNX模型：{onnx_path}，TRT模式切换可能不正常')
             self.config['groups'][self.group]['infer_model'] = app_data
             inferred_variant = infer_model_variant_from_path(
                 app_data, bool(self.config['groups'][self.group].get('is_v8', False))
@@ -4790,8 +4673,7 @@ class Valorant:
                 card = dpg.get_value('card')
                 if card is not None and str(card).strip():
                     self._decrypt_encrypted_model(str(card).strip())
-                else:
-                    if False:pass
+                elif False:pass
             self.refresh_engine()
             class_num = self.get_current_class_num()
             class_ary = list(range(class_num))
@@ -4800,11 +4682,11 @@ class Valorant:
             self.update_target_reference_class_combo()
             self.update_auto_flashbang_ui_state()
             print(app_data + '模型文件存在，已更新')
-        else:  # inserted
+        else:
             print(app_data + '模型文件不存在，请检查路径是否正确')
 
     def on_select_model_click(self, sender, app_data):
-        """选择模型文件的回调函数"""  # inserted
+        """选择模型文件的回调函数"""
         try:
             root = tk.Tk()
             root.withdraw()
@@ -4823,7 +4705,7 @@ class Valorant:
                             self.config['groups'][self.group]['is_trt'] = False
                     dpg.set_value(self.infer_model_input, file_path)
                     self.on_infer_model_change(self.infer_model_input, file_path)
-                else:  # inserted
+                else:
                     print(f'不支持的文件格式: {file_ext}')
                     print('支持的格式: .onnx, .ZTX, .ZTX')
         except Exception as e:
@@ -4882,18 +4764,18 @@ class Valorant:
         print(f'大目标加权已设置为: {round(v, 3)}')
 
     def on_class_priority_change(self, sender, app_data):
-        """类别优先级输入框回调函数"""  # inserted
+        """类别优先级输入框回调函数"""
         priority_text = app_data.strip()
         print(f'类别优先级输入: {priority_text}')
         priority_order = self.parse_class_priority(priority_text)
         if priority_order is not None:
             self.config['groups'][self.group]['aim_keys'][self.select_key]['class_priority_order'] = priority_order
             print(f'类别优先级已更新: {priority_order}')
-        else:  # inserted
+        else:
             print(f'类别优先级格式错误: {priority_text}')
 
     def parse_class_priority(self, priority_text):
-        """解析类别优先级字符串"""  # inserted
+        """解析类别优先级字符串"""
         if not priority_text:
             return []
         try:
@@ -4910,32 +4792,32 @@ class Valorant:
                             seen.add(class_id)
                     except ValueError:
                         return
-            else:  # inserted
+            else:
                 return priority_order
         except Exception:
             return None
 
     def format_class_priority(self, priority_order):
-        """将优先级列表格式化为字符串"""  # inserted
+        """将优先级列表格式化为字符串"""
         return '-'.join(map(str, priority_order)) if priority_order else ''
 
     def get_class_priority_order(self):
-        """获取当前按键的类别优先级顺序"""  # inserted
+        """获取当前按键的类别优先级顺序"""
         try:
             key_config = self.config['groups'][self.group]['aim_keys'][self.select_key]
             return key_config.get('class_priority_order', [])
-        except:
+        except (KeyError, TypeError):
             return []
 
     def on_class_aim_combo_change(self, sender, app_data):
-        """类别选择下拉框回调函数"""  # inserted
+        """类别选择下拉框回调函数"""
         if app_data:
             self.current_selected_class = app_data.replace('类别', '')
             print(f'当前选择类别: {self.current_selected_class}')
             self.update_class_aim_inputs()
 
     def update_class_aim_inputs(self):
-        """根据当前选择的类别更新瞄准部位滑动条的值"""  # inserted
+        """根据当前选择的类别更新瞄准部位滑动条的值"""
         if not hasattr(self, 'aim_bot_position_slider') or self.aim_bot_position_slider is None:
             return None
         key_cfg = self.config['groups'][self.group]['aim_keys'][self.select_key]
@@ -4945,12 +4827,11 @@ class Valorant:
             for i, item in enumerate(cap):
                 if isinstance(item, dict):
                     converted[str(i)] = {'aim_bot_position': float(item.get('aim_bot_position', 0.0)), 'aim_bot_position2': float(item.get('aim_bot_position2', 0.0)), 'confidence_threshold': float(item.get('confidence_threshold', 0.5)), 'iou_t': float(item.get('iou_t', 1.0))}
-                else:  # inserted
+                else:
                     converted[str(i)] = {'aim_bot_position': 0.0, 'aim_bot_position2': 0.0, 'confidence_threshold': 0.5, 'iou_t': 1.0}
             key_cfg['class_aim_positions'] = converted
-        else:  # inserted
-            if not isinstance(cap, dict):
-                key_cfg['class_aim_positions'] = {}
+        elif not isinstance(cap, dict):
+            key_cfg['class_aim_positions'] = {}
         if not self.current_selected_class or not str(self.current_selected_class).isdigit():
             self.current_selected_class = '0'
         if self.current_selected_class not in key_cfg['class_aim_positions']:
@@ -4965,7 +4846,7 @@ class Valorant:
             dpg.set_value(self.iou_t_slider, float(class_config.get('iou_t', 1.0)))
 
     def update_class_aim_combo(self):
-        """更新类别下拉框的选项"""  # inserted
+        """更新类别下拉框的选项"""
         if not hasattr(self, 'class_aim_combo') or self.class_aim_combo is None:
             return None
         try:
@@ -5289,7 +5170,7 @@ class Valorant:
             if self.dynamic_scope_min_scope_slider is not None:
                 if 'min_scope' in dyn:
                     dpg.set_value(self.dynamic_scope_min_scope_slider, int(dyn.get('min_scope', 0)))
-                else:  # inserted
+                else:
                     base_scope = int(key_cfg.get('aim_bot_scope', 0))
                     ratio = float(dyn.get('min_ratio', 0.5))
                     dpg.set_value(self.dynamic_scope_min_scope_slider, int(base_scope * max(0.0, min(1.0, ratio))))
@@ -5321,7 +5202,7 @@ class Valorant:
     def on_checkbox_change(self, sender, app_data):
         if app_data:
             self.selected_items.append(int(dpg.get_item_label(sender)))
-        else:  # inserted
+        else:
             self.selected_items.remove(int(dpg.get_item_label(sender)))
         self.config['groups'][self.group]['aim_keys'][self.select_key]['classes'] = self.selected_items
         print(f'当前选择项: {self.selected_items}')
@@ -5525,7 +5406,7 @@ class Valorant:
             print("无效的按键名称")
 
     def init_class_aim_positions_for_key(self, key_name):
-        """为指定按键初始化类别瞄准位置配置"""  # inserted
+        """为指定按键初始化类别瞄准位置配置"""
         try:
             class_num = self.get_current_class_num()
             key_config = self.config['groups'][self.group]['aim_keys'][key_name]
@@ -5543,77 +5424,7 @@ class Valorant:
     def init_mouse(self):
         try:
             if self.config['move_method'] == 'makcu':
-                if getattr(self, 'makcu', None) is None:
-                    self.makcu = MakcuController()
-                else:  # inserted
-                    try:
-                        self.makcu.disconnect()
-                    except Exception:
-                        pass
-                    self.makcu = MakcuController()
-                if self.makcu is not None:
-                    self._makcu_move_queue = Queue(maxsize=1024)
-                    self._makcu_send_interval = 0.0015
-                    self._makcu_last_send_ts = 0.0
-
-                    def _makcu_sender_worker():
-                        last_ts = 0.0
-                        while not getattr(self, 'end', False):
-                            try:
-                                dx, dy = self._makcu_move_queue.get(timeout=0.1)
-                            except Exception:
-                                continue
-                            try:
-                                while True:
-                                    nx, ny = self._makcu_move_queue.get_nowait()
-                                    dx += int(nx)
-                                    dy += int(ny)
-                            except Exception:
-                                pass
-                            now = time.perf_counter()
-                            wait_s = self._makcu_send_interval - (now - last_ts)
-                            if wait_s > 0:
-                                time.sleep(wait_s)
-                            send_ok = False
-                            for _ in range(2):
-                                try:
-                                    if self.makcu is not None:
-                                        self.makcu.move(int(dx), int(dy))
-                                        send_ok = True
-                                        break
-                                except Exception as e:
-                                    try:
-                                        if self.makcu is not None:
-                                            self.makcu.disconnect()
-                                            time.sleep(0.05)
-                                            self.makcu = MakcuController()
-                                    except:
-                                        time.sleep(0.05)
-                            if not send_ok:
-                                time.sleep(0.01)
-                            last_ts = time.perf_counter()
-
-                    def move_enqueue(x, y):
-                        if self.makcu is None:
-                            return
-                        try:
-                            self._makcu_move_queue.put_nowait((int(x), int(y)))
-                        except Exception:
-                            try:
-                                _ = self._makcu_move_queue.get_nowait()
-                            except Exception:
-                                pass
-                            try:
-                                self._makcu_move_queue.put_nowait((int(x), int(y)))
-                            except Exception:
-                                return None
-                    self.move_r = move_enqueue
-                    if not hasattr(self, '_makcu_sender_started') or not self._makcu_sender_started:
-                        t = Thread(target=_makcu_sender_worker, daemon=True)
-                        t.start()
-                        self._makcu_sender_started = True
-                    self._init_makcu_locks()
-                else:  # inserted
+                if not self._setup_makcu():
                     print('makcu未连接')
         except Exception as e:
             print(f'Makcu初始化失败: {e}')
@@ -5664,7 +5475,7 @@ class Valorant:
                     kmNet.mask_y(1)
                 if self.config['mask_wheel']:
                     kmNet.mask_wheel(1)
-            else:  # inserted
+            else:
                 print(f'初始化失败: code={result}, ip={km_ip}, port={km_port}, uuid={km_uuid}')
                 # Fallback to local move backend so control path can still be verified.
                 self.move_dll = None
@@ -5697,7 +5508,7 @@ class Valorant:
             ret = self.pnmh.OpenDevice(self.config['km_com'])
             if not ret:
                 print('叛逆魔盒未连接')
-            else:  # inserted
+            else:
                 print('叛逆魔盒已连接')
                 print('型号:', chr(self.pnmh.GetModel() + 64))
                 print('版本:', self.pnmh.GetVersion())
@@ -5728,45 +5539,41 @@ class Valorant:
                     catbox.mask_y(1)
                 if self.config['mask_wheel']:
                     catbox.mask_wheel(1)
-            else:  # inserted
+            else:
                 print('CatBox初始化失败')
         if self.config['move_method'] == 'dhz':
             listen_thread = Thread(target=self.start_listen_dhz)
-        else:  # inserted
-            if self.config['move_method'] == 'km_net':
-                listen_thread = Thread(target=self.start_listen_km_net)
-            else:  # inserted
-                if self.config['move_method'] == 'pnmh':
-                    listen_thread = Thread(target=self.start_listen_pnmh)
-                else:  # inserted
-                    if self.config['move_method'] == 'makcu':
-                        listen_thread = Thread(target=self.start_listen_makcu)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            listen_thread = Thread(target=self.start_listen_catbox)
-                        else:  # inserted
-                            listen_thread = Thread(target=self.start_listen)
+        elif self.config['move_method'] == 'km_net':
+            listen_thread = Thread(target=self.start_listen_km_net)
+        elif self.config['move_method'] == 'pnmh':
+            listen_thread = Thread(target=self.start_listen_pnmh)
+        elif self.config['move_method'] == 'makcu':
+            listen_thread = Thread(target=self.start_listen_makcu)
+        elif self.config['move_method'] == 'catbox':
+            listen_thread = Thread(target=self.start_listen_catbox)
+        else:
+            listen_thread = Thread(target=self.start_listen)
         listen_thread.setDaemon(True)
         listen_thread.start()
 
     def _clear_queues(self):
-        """清理所有队列，确保切换模型后队列状态正确"""  # inserted
+        """清理所有队列，确保切换模型后队列状态正确"""
         try:
             while not self.que_aim.empty():
                 try:
                     self.que_aim.get_nowait()
-                except:
+                except Exception:
                     break
             while not self.que_trigger.empty():
                 try:
                     self.que_trigger.get_nowait()
-                except:
+                except Exception:
                     return
         except Exception as e:
             print(f'[队列清理] 清理队列时出错: {e}')
 
     def _reset_aim_states(self):
-        """重置自瞄相关状态，确保切换模型后状态正确"""  # inserted
+        """重置自瞄相关状态，确保切换模型后状态正确"""
         try:
             self.old_pressed_aim_key = ''
             self.aim_key_status = False
@@ -5818,13 +5625,13 @@ class Valorant:
                 if original_path and os.path.exists(original_path):
                     model_path = original_path
                     group_cfg['infer_model'] = original_path
-                else:  # inserted
+                else:
                     possible_onnx = os.path.splitext(model_path)[0] + '.onnx'
                     if os.path.exists(possible_onnx):
                         model_path = possible_onnx
                         group_cfg['infer_model'] = possible_onnx
                         group_cfg['original_infer_model'] = possible_onnx
-                    else:  # inserted
+                    else:
                         return None
         self.engine = None
         if model_path.endswith('.engine') and is_trt and TENSORRT_AVAILABLE:
@@ -5865,7 +5672,7 @@ class Valorant:
                     group_config=group_cfg,
                     global_config=self.config,
                 )
-            else:  # inserted
+            else:
                 self.engine = OnnxRuntimeDmlEngine(
                     model_path,
                     True,
@@ -5896,7 +5703,7 @@ class Valorant:
                     return
 
     def _create_engine_from_bytes(self, model_bytes, is_trt=False, runtime_cfg=None, selected_device=None):
-        """从字节数据创建推理引擎"""  # inserted
+        """从字节数据创建推理引擎"""
         try:
             import onnxruntime as rt
             import warnings
@@ -5942,7 +5749,6 @@ class Valorant:
                     with self._lock:
                         outputs = self.session.run(self.output_names, {self.input_name: img_input})
                         return outputs
-                        return outputs
 
                 def get_class_num(self):
                     outputs_meta = self.session.get_outputs()
@@ -5955,11 +5761,11 @@ class Valorant:
                     return output_shapes[1] - 4
 
                 def __del__(self):
-                    """析构函数，确保资源被正确清理"""  # inserted
+                    """析构函数，确保资源被正确清理"""
                     try:
                         if hasattr(self, 'session'):
                             del self.session
-                    except:
+                    except Exception:
                         return None
             self.engine = DecryptedModelEngine(session)
             print('解密模型引擎创建成功')
@@ -6102,7 +5908,7 @@ class Valorant:
         self.end = False
 
     def close_screenshot(self):
-        """关闭并释放截图资源"""  # inserted
+        """关闭并释放截图资源"""
         if self.screenshot_manager is not None:
             self.screenshot_manager.close()
             self.screenshot_manager = None
@@ -6113,21 +5919,16 @@ class Valorant:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_left(1)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_left(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_left(1)
-            else:  # inserted
-                if self.config['move_method'] == 'dhz':
-                    self.dhz.mask_left(0)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_left(0)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_left(0)
+                elif self.config['move_method'] == 'km_net':
+                    kmNet.mask_left(1)
+                elif self.config['move_method'] == 'catbox':
+                    catbox.mask_left(1)
+            elif self.config['move_method'] == 'dhz':
+                self.dhz.mask_left(0)
+            elif self.config['move_method'] == 'km_net':
+                kmNet.mask_left(0)
+            elif self.config['move_method'] == 'catbox':
+                catbox.mask_left(0)
 
     def on_mask_right_change(self, sender, app_data):
         self.config['mask_right'] = app_data
@@ -6135,21 +5936,16 @@ class Valorant:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_right(1)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_right(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_right(1)
-            else:  # inserted
-                if self.config['move_method'] == 'dhz':
-                    self.dhz.mask_right(0)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_right(0)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_right(0)
+                elif self.config['move_method'] == 'km_net':
+                    kmNet.mask_right(1)
+                elif self.config['move_method'] == 'catbox':
+                    catbox.mask_right(1)
+            elif self.config['move_method'] == 'dhz':
+                self.dhz.mask_right(0)
+            elif self.config['move_method'] == 'km_net':
+                kmNet.mask_right(0)
+            elif self.config['move_method'] == 'catbox':
+                catbox.mask_right(0)
 
     def on_mask_middle_change(self, sender, app_data):
         self.config['mask_middle'] = app_data
@@ -6157,21 +5953,16 @@ class Valorant:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_middle(1)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_middle(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_middle(1)
-            else:  # inserted
-                if self.config['move_method'] == 'dhz':
-                    self.dhz.mask_middle(0)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_middle(0)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_middle(0)
+                elif self.config['move_method'] == 'km_net':
+                    kmNet.mask_middle(1)
+                elif self.config['move_method'] == 'catbox':
+                    catbox.mask_middle(1)
+            elif self.config['move_method'] == 'dhz':
+                self.dhz.mask_middle(0)
+            elif self.config['move_method'] == 'km_net':
+                kmNet.mask_middle(0)
+            elif self.config['move_method'] == 'catbox':
+                catbox.mask_middle(0)
 
     def on_mask_side1_change(self, sender, app_data):
         self.config['mask_side1'] = app_data
@@ -6179,21 +5970,16 @@ class Valorant:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_side1(1)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_side1(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_side1(1)
-            else:  # inserted
-                if self.config['move_method'] == 'dhz':
-                    self.dhz.mask_side1(0)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_side1(0)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_side1(0)
+                elif self.config['move_method'] == 'km_net':
+                    kmNet.mask_side1(1)
+                elif self.config['move_method'] == 'catbox':
+                    catbox.mask_side1(1)
+            elif self.config['move_method'] == 'dhz':
+                self.dhz.mask_side1(0)
+            elif self.config['move_method'] == 'km_net':
+                kmNet.mask_side1(0)
+            elif self.config['move_method'] == 'catbox':
+                catbox.mask_side1(0)
 
     def on_mask_side2_change(self, sender, app_data):
         self.config['mask_side2'] = app_data
@@ -6201,21 +5987,16 @@ class Valorant:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_side2(1)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_side2(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_side2(1)
-            else:  # inserted
-                if self.config['move_method'] == 'dhz':
-                    self.dhz.mask_side2(0)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_side2(0)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_side2(0)
+                elif self.config['move_method'] == 'km_net':
+                    kmNet.mask_side2(1)
+                elif self.config['move_method'] == 'catbox':
+                    catbox.mask_side2(1)
+            elif self.config['move_method'] == 'dhz':
+                self.dhz.mask_side2(0)
+            elif self.config['move_method'] == 'km_net':
+                kmNet.mask_side2(0)
+            elif self.config['move_method'] == 'catbox':
+                catbox.mask_side2(0)
 
     def on_mask_x_change(self, sender, app_data):
         self.config['mask_x'] = app_data
@@ -6223,21 +6004,16 @@ class Valorant:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_x(1)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_x(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_x(1)
-            else:  # inserted
-                if self.config['move_method'] == 'dhz':
-                    self.dhz.mask_x(0)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_x(0)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_x(0)
+                elif self.config['move_method'] == 'km_net':
+                    kmNet.mask_x(1)
+                elif self.config['move_method'] == 'catbox':
+                    catbox.mask_x(1)
+            elif self.config['move_method'] == 'dhz':
+                self.dhz.mask_x(0)
+            elif self.config['move_method'] == 'km_net':
+                kmNet.mask_x(0)
+            elif self.config['move_method'] == 'catbox':
+                catbox.mask_x(0)
 
     def on_mask_y_change(self, sender, app_data):
         self.config['mask_y'] = app_data
@@ -6245,21 +6021,16 @@ class Valorant:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_y(1)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_y(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_y(1)
-            else:  # inserted
-                if self.config['move_method'] == 'dhz':
-                    self.dhz.mask_y(0)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_y(0)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_y(0)
+                elif self.config['move_method'] == 'km_net':
+                    kmNet.mask_y(1)
+                elif self.config['move_method'] == 'catbox':
+                    catbox.mask_y(1)
+            elif self.config['move_method'] == 'dhz':
+                self.dhz.mask_y(0)
+            elif self.config['move_method'] == 'km_net':
+                kmNet.mask_y(0)
+            elif self.config['move_method'] == 'catbox':
+                catbox.mask_y(0)
 
     def on_mask_wheel_change(self, sender, app_data):
         self.config['mask_wheel'] = app_data
@@ -6267,21 +6038,16 @@ class Valorant:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_wheel(1)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_wheel(1)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_wheel(1)
-            else:  # inserted
-                if self.config['move_method'] == 'dhz':
-                    self.dhz.mask_wheel(0)
-                else:  # inserted
-                    if self.config['move_method'] == 'km_net':
-                        kmNet.mask_wheel(0)
-                    else:  # inserted
-                        if self.config['move_method'] == 'catbox':
-                            catbox.mask_wheel(0)
+                elif self.config['move_method'] == 'km_net':
+                    kmNet.mask_wheel(1)
+                elif self.config['move_method'] == 'catbox':
+                    catbox.mask_wheel(1)
+            elif self.config['move_method'] == 'dhz':
+                self.dhz.mask_wheel(0)
+            elif self.config['move_method'] == 'km_net':
+                kmNet.mask_wheel(0)
+            elif self.config['move_method'] == 'catbox':
+                catbox.mask_wheel(0)
 
     def on_aim_mask_x_change(self, sender, app_data):
         self.config['aim_mask_x'] = app_data
@@ -6290,7 +6056,7 @@ class Valorant:
         self.config['aim_mask_y'] = app_data
 
     def _init_makcu_locks(self):
-        """初始化 makcu 的按钮和轴锁定状态"""  # inserted
+        """初始化 makcu 的按钮和轴锁定状态"""
         if self.makcu is None:
             return
         try:
@@ -6340,25 +6106,23 @@ class Valorant:
             if current_model.endswith('.ZTX') and self.decrypted_model_data is not None:
                 self.config['groups'][self.group]['original_infer_model'] = current_model
                 print('已启用TRT模式，将在启动时检测并转换引擎文件')
-            else:  # inserted
-                if current_model.endswith('.onnx'):
-                    self.config['groups'][self.group]['original_infer_model'] = current_model
-                    print('已启用TRT模式，将在启动时检测并转换引擎文件')
-                else:  # inserted
-                    if current_model.endswith('.engine'):
-                        onnx_path = self.config['groups'][self.group].get('original_infer_model', None)
-                        if not onnx_path:
-                            possible_onnx = os.path.splitext(current_model)[0] + '.onnx'
-                            if os.path.exists(possible_onnx):
-                                self.config['groups'][self.group]['original_infer_model'] = possible_onnx
-                                print(f'已自动推断并设置原始模型路径: {possible_onnx}')
-                            else:  # inserted
-                                print('警告: 无法找到对应的ONNX模型，TRT切换可能不正常')
-                    else:  # inserted
-                        print('当前模型不是onnx、ZTX或engine格式，无法正确处理TRT模式。')
-                        self.config['groups'][self.group]['is_trt'] = False
-                        dpg.set_value(self.is_trt_checkbox, False)
-        else:  # inserted
+            elif current_model.endswith('.onnx'):
+                self.config['groups'][self.group]['original_infer_model'] = current_model
+                print('已启用TRT模式，将在启动时检测并转换引擎文件')
+            elif current_model.endswith('.engine'):
+                onnx_path = self.config['groups'][self.group].get('original_infer_model', None)
+                if not onnx_path:
+                    possible_onnx = os.path.splitext(current_model)[0] + '.onnx'
+                    if os.path.exists(possible_onnx):
+                        self.config['groups'][self.group]['original_infer_model'] = possible_onnx
+                        print(f'已自动推断并设置原始模型路径: {possible_onnx}')
+                    else:
+                        print('警告: 无法找到对应的ONNX模型，TRT切换可能不正常')
+            else:
+                print('当前模型不是onnx、ZTX或engine格式，无法正确处理TRT模式。')
+                self.config['groups'][self.group]['is_trt'] = False
+                dpg.set_value(self.is_trt_checkbox, False)
+        else:
             current_model = self.config['groups'][self.group]['infer_model']
             if current_model.endswith('.engine'):
                 dopa_path = self.config['groups'][self.group].get('original_infer_model', None)
@@ -6370,13 +6134,12 @@ class Valorant:
                     dpg.set_value(self.is_v8_checkbox, is_v8)
                     print(f'V8自动勾选状态: {is_v8}')
                     return
-            else:  # inserted
-                if current_model.endswith('.ZTX') and self.decrypted_model_data is not None:
-                    self.refresh_engine()
-                    is_v8 = self.config['groups'][self.group].get('is_v8', False)
-                    dpg.set_value(self.is_v8_checkbox, is_v8)
-                    print(f'V8自动勾选状态: {is_v8}')
-                    return
+            elif current_model.endswith('.ZTX') and self.decrypted_model_data is not None:
+                self.refresh_engine()
+                is_v8 = self.config['groups'][self.group].get('is_v8', False)
+                dpg.set_value(self.is_v8_checkbox, is_v8)
+                print(f'V8自动勾选状态: {is_v8}')
+                return
             onnx_path = self.config['groups'][self.group].get('original_infer_model', None)
             if onnx_path and os.path.exists(onnx_path):
                 self.config['groups'][self.group]['infer_model'] = onnx_path
@@ -6385,7 +6148,7 @@ class Valorant:
                 is_v8 = self.config['groups'][self.group].get('is_v8', False)
                 dpg.set_value(self.is_v8_checkbox, is_v8)
                 print(f'已切换回 ONNX Runtime 推理，V8自动勾选状态: {is_v8}')
-            else:  # inserted
+            else:
                 print('未找到原始ONNX模型路径，请检查配置。')
         class_num = self.get_current_class_num()
         class_ary = list(range(class_num))
@@ -6870,17 +6633,17 @@ class Valorant:
             return c - 5
         if len(shape) == 2 and 1 <= shape[1] <= 200:
             return shape[1]
-        else:  # inserted
+        else:
             return self.get_onnx_class_num()
 
     def get_onnx_class_num(self):
-        """从ONNX模型推断类别数"""  # inserted
+        """从ONNX模型推断类别数"""
         onnx_path = self.config['groups'][self.group].get('original_infer_model', '')
         if not onnx_path:
             current_model = self.config['groups'][self.group]['infer_model']
             if current_model.endswith('.engine'):
                 onnx_path = os.path.splitext(current_model)[0] + '.onnx'
-            else:  # inserted
+            else:
                 onnx_path = current_model
         try:
             import onnxruntime as ort
@@ -6888,10 +6651,9 @@ class Valorant:
             if onnx_path.endswith('.ZTX') and self.decrypted_model_data is not None:
                 providers = ['DmlExecutionProvider', 'CPUExecutionProvider'] if 'DmlExecutionProvider' in ort.get_available_providers() else ['CPUExecutionProvider']
                 session = ort.InferenceSession(self.decrypted_model_data, providers=providers)
-            else:  # inserted
-                if onnx_path and os.path.exists(onnx_path) and (not onnx_path.endswith('.ZTX')):
-                    providers = ['DmlExecutionProvider', 'CPUExecutionProvider'] if 'DmlExecutionProvider' in ort.get_available_providers() else ['CPUExecutionProvider']
-                    session = ort.InferenceSession(onnx_path, providers=providers)
+            elif onnx_path and os.path.exists(onnx_path) and (not onnx_path.endswith('.ZTX')):
+                providers = ['DmlExecutionProvider', 'CPUExecutionProvider'] if 'DmlExecutionProvider' in ort.get_available_providers() else ['CPUExecutionProvider']
+                session = ort.InferenceSession(onnx_path, providers=providers)
             if session is not None:
                 outputs = session.get_outputs()
                 if len(outputs) > 0:
@@ -6936,7 +6698,7 @@ class Valorant:
             return 1
 
     def _init_config_handlers(self):
-        """\n        初始化配置变更处理器，注册配置项和处理函数\n        """  # inserted
+        """\n        初始化配置变更处理器，注册配置项和处理函数\n        """
         basic_group = ConfigItemGroup(self.config_handler)
         basic_group.register_item('card', 'card', str)
         basic_group.register_item('infer_debug', 'infer_debug', bool)
@@ -7067,23 +6829,23 @@ class Valorant:
         self.config_handler.register_config_item('stages', 'stages', None, None, self.on_stages_change)
 
     def on_gui_dpi_scale_change(self, sender, app_data):
-        """DPI缩放变化回调"""  # inserted
+        """DPI缩放变化回调"""
         self.config['gui_dpi_scale'] = app_data
         print(f'DPI缩放已更改为: {app_data:.2f}, 重启应用后生效')
 
     def on_reset_dpi_scale_click(self, sender, app_data):
-        """重置DPI缩放到自动检测值"""  # inserted
+        """重置DPI缩放到自动检测值"""
         auto_scale = self.get_system_dpi_scale()
         self.config['gui_dpi_scale'] = 0.0
         dpg.set_value(self.dpi_scale_slider, auto_scale)
         print(f'DPI缩放已重置为自动检测: {auto_scale:.2f}, 重启应用后生效')
 
     def on_change(self, sender, app_data):
-        """\n        通用的配置变更处理方法，将事件转发给ConfigChangeHandler处理\n        \n        Args:\n            sender: 发送者ID\n            app_data: 新的配置值\n        """  # inserted
+        """\n        通用的配置变更处理方法，将事件转发给ConfigChangeHandler处理\n        \n        Args:\n            sender: 发送者ID\n            app_data: 新的配置值\n        """
         self.config_handler.handle_change(sender, app_data)
 
     def on_controller_type_change(self, sender, app_data):
-        """控制器类型切换"""  # inserted
+        """控制器类型切换"""
         print('当前版本只支持PID控制器')
 
     def on_pid_kp_x_change(self, sender, app_data):
@@ -7182,21 +6944,21 @@ class Valorant:
     def on_target_reference_class_change(self, sender, app_data):
         try:
             class_id = int(app_data.replace('类别', ''))
-        except:
+        except (ValueError, AttributeError):
             class_id = 0
         self.config['groups'][self.group]['aim_keys'][self.select_key]['target_reference_class'] = class_id
 
     def _update_pid_params(self):
-        """更新双轴PID控制器参数"""  # inserted
+        """更新双轴PID控制器参数"""
         if hasattr(self, 'aim_pid'):
             self.refresh_controller_params()
 
     def _register_control_callback(self, control_id):
-        """\n        为控件注册回调函数\n        \n        Args:\n            control_id: 控件ID\n        """  # inserted
+        """\n        为控件注册回调函数\n        \n        Args:\n            control_id: 控件ID\n        """
         dpg.set_item_callback(control_id, self.on_change)
 
     def detect_and_handle_flashbang(self, boxes, class_ids, model_width, model_height, scores=None):
-        """\n        检测闪光弹并执行背闪动作\n        \n        Args:\n            boxes: 检测框数组\n            class_ids: 类别ID数组\n            model_width: 模型输入宽度\n            model_height: 模型输入高度\n            scores: 置信度分数数组（可选）\n        """  # inserted
+        """\n        检测闪光弹并执行背闪动作\n        \n        Args:\n            boxes: 检测框数组\n            class_ids: 类别ID数组\n            model_width: 模型输入宽度\n            model_height: 模型输入高度\n            scores: 置信度分数数组（可选）\n        """
         import time
         import threading
         current_time = time.time()
@@ -7226,12 +6988,11 @@ class Valorant:
                 print(f'发现类别4: 置信度={current_confidence:.3f}, 尺寸={width:.1f}x{height:.1f}, 最小边={min_box_size:.1f}')
                 if scores is not None and scores[i] < min_confidence:
                     print(f'  跳过: 置信度{current_confidence:.3f} < {min_confidence}')
-                else:  # inserted
-                    if min_box_size < min_size:
-                        print(f'  跳过: 尺寸{min_box_size:.1f} < {min_size} (远距离闪光弹可能需要降低此阈值)')
-                    else:  # inserted
-                        print('  通过检查，添加到背闪列表')
-                        flashbang_indices.append(i)
+                elif min_box_size < min_size:
+                    print(f'  跳过: 尺寸{min_box_size:.1f} < {min_size} (远距离闪光弹可能需要降低此阈值)')
+                else:
+                    print('  通过检查，添加到背闪列表')
+                    flashbang_indices.append(i)
         if class4_detected and (not flashbang_indices):
             print('检测到类别4但全部被过滤 - 建议降低最小置信度或最小尺寸阈值')
         if not flashbang_indices:
@@ -7249,21 +7010,20 @@ class Valorant:
                 print(f'闪光弹位置: x={flashbang_center_x:.1f} (相对位置: {relative_pos:.2f})')
                 if flashbang_center_x < center_x:
                     left_count += 1
-                else:  # inserted
+                else:
                     right_count += 1
             except (IndexError, TypeError) as e:
                 print(f'计算闪光弹位置时出错: {e}')
         if left_count > right_count:
             turn_direction = (-1)
             direction_text = '左'
-        else:  # inserted
-            if right_count > left_count:
-                turn_direction = 1
-                direction_text = '右'
-            else:  # inserted
-                import random
-                turn_direction = random.choice([(-1), 1])
-                direction_text = '左' if turn_direction == (-1) else '右'
+        elif right_count > left_count:
+            turn_direction = 1
+            direction_text = '右'
+        else:
+            import random
+            turn_direction = random.choice([(-1), 1])
+            direction_text = '左' if turn_direction == (-1) else '右'
         print(f'闪光弹分布: 左侧{left_count}个，右侧{right_count}个，向{direction_text}背闪')
         self.last_flashbang_time = current_time
         delay_ms = self.config['auto_flashbang']['delay_ms']
@@ -7271,7 +7031,7 @@ class Valorant:
         threading.Timer(delay_ms / 1000.0, self.execute_flashbang_turn, args=(turn_direction,)).start()
 
     def execute_flashbang_turn(self, turn_direction):
-        """\n        执行背闪转向动作\n        \n        Args:\n            turn_direction: 转向方向，-1为左，1为右\n        """  # inserted
+        """\n        执行背闪转向动作\n        \n        Args:\n            turn_direction: 转向方向，-1为左，1为右\n        """
         import time
         import threading
         if self.is_turning_back:
@@ -7289,7 +7049,7 @@ class Valorant:
                 actual_move = self.execute_flashbang_ultra_fast_move(mouse_move_x, 0)
                 if actual_move:
                     self.flashbang_actual_move_x, self.flashbang_actual_move_y = actual_move
-            else:  # inserted
+            else:
                 self.execute_move(mouse_move_x, 0)
             print(f'实际移动距离: X={self.flashbang_actual_move_x}, Y={self.flashbang_actual_move_y}')
             return_delay = self.config['auto_flashbang']['return_delay'] / 1000.0
@@ -7327,7 +7087,7 @@ class Valorant:
             self.is_turning_back = False
 
     def execute_flashbang_curve_move(self, relative_move_x, relative_move_y):
-        """\n        执行背闪的曲线移动 - 优化版本，更像人类的自然反应\n        快速启动，快速结束，中间保持流畅\n        \n        Args:\n            relative_move_x: X轴相对移动距离\n            relative_move_y: Y轴相对移动距离\n        """  # inserted
+        """\n        执行背闪的曲线移动 - 优化版本，更像人类的自然反应\n        快速启动，快速结束，中间保持流畅\n        \n        Args:\n            relative_move_x: X轴相对移动距离\n            relative_move_y: Y轴相对移动距离\n        """
         import time
         import random
         import math
@@ -7339,7 +7099,7 @@ class Valorant:
             if isinstance(curve_points, tuple):
                 print('曲线生成失败，使用直线移动')
                 self.move_r(round(relative_move_x), round(relative_move_y))
-            else:  # inserted
+            else:
                 print(f'背闪曲线控制点: {knots_count}个，生成轨迹点数: {len(curve_points)}个')
                 print(f'目标移动: X={relative_move_x}, Y={relative_move_y}')
                 total_distance = math.sqrt(relative_move_x ** 2 + relative_move_y ** 2)
@@ -7355,7 +7115,7 @@ class Valorant:
                         frac = idx - idx_floor
                         if idx_floor == idx_ceil:
                             point = curve_points[idx_floor]
-                        else:  # inserted
+                        else:
                             x = curve_points[idx_floor][0] * (1 - frac) + curve_points[idx_ceil][0] * frac
                             y = curve_points[idx_floor][1] * (1 - frac) + curve_points[idx_ceil][1] * frac
                             point = (x, y)
@@ -7363,7 +7123,7 @@ class Valorant:
                     curve_points = interpolated_points
 
                 def human_like_easing(t):
-                    """\n                人性化缓动函数：模拟人类紧急反应的速度曲线\n                - 开始时快速加速（紧急反应）\n                - 中间保持匀速（控制阶段）\n                - 结束时快速减速（精确定位）\n                """  # inserted
+                    """\n                人性化缓动函数：模拟人类紧急反应的速度曲线\n                - 开始时快速加速（紧急反应）\n                - 中间保持匀速（控制阶段）\n                - 结束时快速减速（精确定位）\n                """
                     if t < 0.15:
                         normalized_t = t / 0.15
                         return 0.4 * normalized_t ** 2
@@ -7414,7 +7174,7 @@ class Valorant:
             self.move_r(round(relative_move_x), round(relative_move_y))
 
     def execute_flashbang_curve_move_fast(self, relative_move_x, relative_move_y):
-        """\n        执行背闪回转的快速曲线移动 - 专门用于回转，更快更直接\n        \n        Args:\n            relative_move_x: X轴相对移动距离\n            relative_move_y: Y轴相对移动距离\n        """  # inserted
+        """\n        执行背闪回转的快速曲线移动 - 专门用于回转，更快更直接\n        \n        Args:\n            relative_move_x: X轴相对移动距离\n            relative_move_y: Y轴相对移动距离\n        """
         import time
         import random
         import math
@@ -7426,7 +7186,7 @@ class Valorant:
             if isinstance(curve_points, tuple):
                 print('快速曲线生成失败，使用直线移动')
                 self.move_r(round(relative_move_x), round(relative_move_y))
-            else:  # inserted
+            else:
                 print(f'回转快速曲线: {knots_count}个控制点，轨迹点数: {len(curve_points)}个')
                 total_distance = math.sqrt(relative_move_x ** 2 + relative_move_y ** 2)
                 base_duration = 0
@@ -7441,7 +7201,7 @@ class Valorant:
                         frac = idx - idx_floor
                         if idx_floor == idx_ceil:
                             point = curve_points[idx_floor]
-                        else:  # inserted
+                        else:
                             x = curve_points[idx_floor][0] * (1 - frac) + curve_points[idx_ceil][0] * frac
                             y = curve_points[idx_floor][1] * (1 - frac) + curve_points[idx_ceil][1] * frac
                             point = (x, y)
@@ -7449,7 +7209,7 @@ class Valorant:
                     curve_points = interpolated_points
 
                 def fast_return_easing(t):
-                    """回转专用缓动：快进快出，中间匀速"""  # inserted
+                    """回转专用缓动：快进快出，中间匀速"""
                     if t < 0.1:
                         return 0.5 * (t / 0.1) ** 1.5
                     if t > 0.9:
@@ -7493,7 +7253,7 @@ class Valorant:
             self.move_r(round(relative_move_x), round(relative_move_y))
 
     def execute_flashbang_curve_move_with_tracking(self, relative_move_x, relative_move_y):
-        """\n        执行背闪的曲线移动并跟踪实际移动距离\n        \n        Args:\n            relative_move_x: X轴相对移动距离\n            relative_move_y: Y轴相对移动距离\n            \n        Returns:\n            tuple: (actual_move_x, actual_move_y) 实际移动的距离\n        """  # inserted
+        """\n        执行背闪的曲线移动并跟踪实际移动距离\n        \n        Args:\n            relative_move_x: X轴相对移动距离\n            relative_move_y: Y轴相对移动距离\n            \n        Returns:\n            tuple: (actual_move_x, actual_move_y) 实际移动的距离\n        """
         import time
         import random
         import math
@@ -7523,7 +7283,7 @@ class Valorant:
                     frac = idx - idx_floor
                     if idx_floor == idx_ceil:
                         point = curve_points[idx_floor]
-                    else:  # inserted
+                    else:
                         x = curve_points[idx_floor][0] * (1 - frac) + curve_points[idx_ceil][0] * frac
                         y = curve_points[idx_floor][1] * (1 - frac) + curve_points[idx_ceil][1] * frac
                         point = (x, y)
@@ -7531,7 +7291,7 @@ class Valorant:
                 curve_points = interpolated_points
 
             def human_like_easing(t):
-                """\n                人性化缓动函数：模拟人类紧急反应的速度曲线\n                - 开始时快速加速（紧急反应）\n                - 中间保持匀速（控制阶段）\n                - 结束时快速减速（精确定位）\n                """  # inserted
+                """\n                人性化缓动函数：模拟人类紧急反应的速度曲线\n                - 开始时快速加速（紧急反应）\n                - 中间保持匀速（控制阶段）\n                - 结束时快速减速（精确定位）\n                """
                 if t < 0.15:
                     normalized_t = t / 0.15
                     return 0.4 * normalized_t ** 2
@@ -7587,7 +7347,7 @@ class Valorant:
             return (relative_move_x, relative_move_y)
 
     def execute_flashbang_ultra_fast_move(self, relative_move_x, relative_move_y):
-        """\n        超快速背闪移动：大步长，无延迟，最直接的路径\n        \n        Args:\n            relative_move_x: X轴相对移动距离\n            relative_move_y: Y轴相对移动距离\n            \n        Returns:\n            tuple: (actual_move_x, actual_move_y) 实际移动的距离\n        """  # inserted
+        """\n        超快速背闪移动：大步长，无延迟，最直接的路径\n        \n        Args:\n            relative_move_x: X轴相对移动距离\n            relative_move_y: Y轴相对移动距离\n            \n        Returns:\n            tuple: (actual_move_x, actual_move_y) 实际移动的距离\n        """
         try:
             print(f'超快速背闪移动: X={relative_move_x}, Y={relative_move_y}')
             total_distance = math.sqrt(relative_move_x ** 2 + relative_move_y ** 2)
@@ -7596,30 +7356,29 @@ class Valorant:
                 actual_total_x = round(relative_move_x)
                 actual_total_y = round(relative_move_y)
                 print('小距离一次移动完成')
-            else:  # inserted
-                if total_distance <= 500:
-                    step1_x = round(relative_move_x * 0.6)
-                    step1_y = round(relative_move_y * 0.6)
-                    step2_x = round(relative_move_x - step1_x)
-                    step2_y = round(relative_move_y - step1_y)
-                    self.move_r(step1_x, step1_y)
-                    self.move_r(step2_x, step2_y)
-                    actual_total_x = step1_x + step2_x
-                    actual_total_y = step1_y + step2_y
-                    print(f'中距离2步移动完成: ({step1_x},{step1_y}) -> ({step2_x},{step2_y})')
-                else:  # inserted
-                    step1_x = round(relative_move_x * 0.5)
-                    step1_y = round(relative_move_y * 0.5)
-                    step2_x = round(relative_move_x * 0.3)
-                    step2_y = round(relative_move_y * 0.3)
-                    step3_x = round(relative_move_x - step1_x - step2_x)
-                    step3_y = round(relative_move_y - step1_y - step2_y)
-                    self.move_r(step1_x, step1_y)
-                    self.move_r(step2_x, step2_y)
-                    self.move_r(step3_x, step3_y)
-                    actual_total_x = step1_x + step2_x + step3_x
-                    actual_total_y = step1_y + step2_y + step3_y
-                    print(f'大距离3步移动完成: ({step1_x},{step1_y}) -> ({step2_x},{step2_y}) -> ({step3_x},{step3_y})')
+            elif total_distance <= 500:
+                step1_x = round(relative_move_x * 0.6)
+                step1_y = round(relative_move_y * 0.6)
+                step2_x = round(relative_move_x - step1_x)
+                step2_y = round(relative_move_y - step1_y)
+                self.move_r(step1_x, step1_y)
+                self.move_r(step2_x, step2_y)
+                actual_total_x = step1_x + step2_x
+                actual_total_y = step1_y + step2_y
+                print(f'中距离2步移动完成: ({step1_x},{step1_y}) -> ({step2_x},{step2_y})')
+            else:
+                step1_x = round(relative_move_x * 0.5)
+                step1_y = round(relative_move_y * 0.5)
+                step2_x = round(relative_move_x * 0.3)
+                step2_y = round(relative_move_y * 0.3)
+                step3_x = round(relative_move_x - step1_x - step2_x)
+                step3_y = round(relative_move_y - step1_y - step2_y)
+                self.move_r(step1_x, step1_y)
+                self.move_r(step2_x, step2_y)
+                self.move_r(step3_x, step3_y)
+                actual_total_x = step1_x + step2_x + step3_x
+                actual_total_y = step1_y + step2_y + step3_y
+                print(f'大距离3步移动完成: ({step1_x},{step1_y}) -> ({step2_x},{step2_y}) -> ({step3_x},{step3_y})')
             print(f'超快速移动完成，实际移动: X={actual_total_x}, Y={actual_total_y}')
             return (actual_total_x, actual_total_y)
         except Exception as e:
@@ -7628,7 +7387,7 @@ class Valorant:
             return (relative_move_x, relative_move_y)
 
     def is_using_dopa_model(self):
-        """\n        检查当前是否使用ZTX模型（包括ZTX的TRT版本）\n        注意：背闪功能只对ZTX模型有效\n        \n        Returns:\n            bool: 如果当前使用ZTX模型返回True，否则返回False\n        """  # inserted
+        """\n        检查当前是否使用ZTX模型（包括ZTX的TRT版本）\n        注意：背闪功能只对ZTX模型有效\n        \n        Returns:\n            bool: 如果当前使用ZTX模型返回True，否则返回False\n        """
         try:
             if not hasattr(self, 'group') or not self.group:
                 return False
@@ -7641,9 +7400,8 @@ class Valorant:
             if current_model.endswith('.engine'):
                 if original_model.endswith('ZTX'):
                     is_dopa_trt = True
-                else:  # inserted
-                    if 'ZTX' in current_model.lower():
-                        is_dopa_trt = True
+                elif 'ZTX' in current_model.lower():
+                    is_dopa_trt = True
             if is_dopa_original and self.decrypted_model_data is not None:
                 return True
             if is_dopa_trt:
@@ -7653,7 +7411,7 @@ class Valorant:
             return False
 
     def is_using_encrypted_model(self):
-        """\n        检查当前是否使用加密模型（包括ZTX和ZTX模型）\n        \n        Returns:\n            bool: 如果当前使用加密模型返回True，否则返回False\n        """  # inserted
+        """\n        检查当前是否使用加密模型（包括ZTX和ZTX模型）\n        \n        Returns:\n            bool: 如果当前使用加密模型返回True，否则返回False\n        """
         try:
             if not hasattr(self, 'group') or not self.group:
                 return False
@@ -7666,9 +7424,8 @@ class Valorant:
             if current_model.endswith('.engine'):
                 if original_model.endswith('.ZTX') or original_model.endswith('.ZTX'):
                     is_encrypted_trt = True
-                else:  # inserted
-                    if 'ZTX' in current_model.lower() or 'ZTX' in current_model.lower():
-                        is_encrypted_trt = True
+                elif 'ZTX' in current_model.lower() or 'ZTX' in current_model.lower():
+                    is_encrypted_trt = True
             if is_encrypted_original and self.decrypted_model_data is not None:
                 return True
             if is_encrypted_trt:
@@ -7680,7 +7437,7 @@ class Valorant:
 from inference_engine import TensorRTInferenceEngine, auto_convert_engine
 
 def auto_convert_engine(onnx_path):
-    """\n    增强版的自动转换函数，会先检查TensorRT环境是否可用\n    \n    Args:\n        onnx_path: ONNX模型的路径\n        \n    Returns:\n        bool: 转换是否成功\n    """  # inserted
+    """\n    增强版的自动转换函数，会先检查TensorRT环境是否可用\n    \n    Args:\n        onnx_path: ONNX模型的路径\n        \n    Returns:\n        bool: 转换是否成功\n    """
     if not TENSORRT_AVAILABLE:
         print('TensorRT环境不可用，无法转换为TRT引擎')
         return False
@@ -7713,7 +7470,7 @@ if __name__ == '__main__':
         print('程序发生错误，详细信息已写入 error_log.txt。请将该文件反馈给开发者。')
 
     def migrate_auto_y_config(self):
-        """\n        迁移auto_y从组级别配置到按键级别配置\n        确保向后兼容性，处理可能没有此配置的旧配置\n        """  # inserted
+        """\n        迁移auto_y从组级别配置到按键级别配置\n        确保向后兼容性，处理可能没有此配置的旧配置\n        """
         for group_key, group_data in self.config['groups'].items():
             if 'auto_y' in group_data:
                 group_auto_y = group_data['auto_y']
