@@ -29,10 +29,7 @@ from PIL import Image
 from pynput import keyboard, mouse
 from pyclick import HumanCurve
 import threading
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import tkinter as tk
-from tkinter import filedialog
 from aim_pipeline import AimPipeline
 TENSORRT_AVAILABLE = False
 
@@ -207,19 +204,8 @@ def create_gradient_image(width, height):
     img = Image.fromarray(gradient, 'RGBA')
     img.save('skeet_gradient.png')
     return 'skeet_gradient.png'
-random_function_num = random.randint(1, 5)
-for i in range(random_function_num):
-    random_function_name = 'a'
-    random_function_name += ''.join(random.sample(string.ascii_letters + string.digits, 8))
-    random_function_content_num = random.randint(1, 5)
-    random_function_content = ''
-    for ii in range(random_function_content_num):
-        content = ''.join(random.sample(string.ascii_letters + string.digits, 8))
-        content = f'_{content} = True'
-        random_function_content += content + '\n'
-    exec(f'def {random_function_name}(): {random_function_content}')
-    exec(f'{random_function_name}()')
-print("")
+
+print('')
 print('####### ######  ####  ####  ### \n   #    #      #    # #   # #   # \n   #    #####  #    # ####  #   # \n   #    #      #    # #  #  #   # \n   #    ######  ####  #   # ###  \n                                        \n')
 VERSION = 'v2.1.5'
 UPDATE_TIME = '2025-11-04'

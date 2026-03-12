@@ -167,7 +167,6 @@ class OnnxRuntimeDmlEngine:
         with self._lock:
             if self._session is not None:
                 return
-                return
             effective_runtime_cfg = self.runtime_config or resolve_runtime_config(
                 self.global_config, self.group_config
             )
@@ -184,7 +183,8 @@ class OnnxRuntimeDmlEngine:
                 f'实际使用: {self._providers}，设备策略: {self.selected_device}'
             )
             if self.is_onnx_engine:
-                self._model_bytes = open(self.model_path, 'rb').read()
+                with open(self.model_path, 'rb') as f:
+                    self._model_bytes = f.read()
             else:
                 self._model_bytes = build_onnx(self.model_path)
             session_kwargs = {'providers': self._providers}
@@ -196,23 +196,6 @@ class OnnxRuntimeDmlEngine:
             self._input_name = self._session.get_inputs()[0].name
             self._input_shape = self._session.get_inputs()[0].shape
             self._output_names = [out.name for out in self._session.get_outputs()]
-
-    def _determine_providers(self) -> List[str]:
-        """确定推理提供商优先级"""
-        available = rt.get_available_providers()
-        providers = []
-        if self.is_trt:
-            priority_providers = ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'DmlExecutionProvider',
-                                  'AzureExecutionProvider', 'CPUExecutionProvider']
-        else:
-            priority_providers = ['DmlExecutionProvider', 'CUDAExecutionProvider', 'AzureExecutionProvider',
-                                  'CPUExecutionProvider']
-        for provider in priority_providers:
-            if provider in available:
-                providers.append(provider)
-        if not providers:
-            providers = available
-        return providers
 
     @property
     def nms_processor(self) -> NMSProcessor:
@@ -324,5 +307,6 @@ class OnnxRuntimeDmlEngine:
                 del self._session
             if hasattr(self, '_nms_processor') and self._nms_processor:
                 self._nms_processor.clear_cache()
-        except Exception:
-            return None
+        except Exception as e:
+            import logging
+            logging.debug(f'清理推理会话时出错: {e}')

@@ -1,6 +1,7 @@
 import time
 import cv2
 import queue
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 class OBSVideoStream:
@@ -16,7 +17,7 @@ class OBSVideoStream:
         self.screenshot_queue = queue.Queue(maxsize=1)
         self.cap = None
         self.running = False
-        self.latency_stats = {'frames_received': 0, 'frames_dropped': 0, 'decode_times': []}
+        self.latency_stats = {'frames_received': 0, 'frames_dropped': 0, 'decode_times': deque(maxlen=100)}
 
     def print_latency_report(self):
         """打印延迟统计报告"""
@@ -59,8 +60,6 @@ class OBSVideoStream:
                 consecutive_failures = 0
                 decode_time = time.perf_counter() - start_time
                 self.latency_stats['decode_times'].append(decode_time * 1000)
-                if len(self.latency_stats['decode_times']) > 100:
-                    self.latency_stats['decode_times'].pop(0)
                 self.latency_stats['frames_received'] += 1
                 if self.frame_queue.full():
                     try:

@@ -19,4 +19,5 @@ def build_model(path, username):
         model_bytes = cipher.decrypt(file_content)
         return model_bytes
     except Exception as e:
-        print('解密模型失败')
+        print(f'解密模型失败: {e}')
+        return None

@@ -43,9 +43,13 @@ class DHZBOX:
     def __udp_receiver(self, port, ip=''):
         print(port)
         SCOK_receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        SCOK_receiver.settimeout(1.0)
         SCOK_receiver.bind((ip, port))
         while self.RECEIVER_FLAG:
-            data, address = SCOK_receiver.recvfrom(1024)
+            try:
+                data, address = SCOK_receiver.recvfrom(1024)
+            except socket.timeout:
+                continue
             mag = data.decode()
             try:
                 cmd = mag.split('|')
@@ -62,9 +66,13 @@ class DHZBOX:
     def __udp_receiver2(self, port, ip=''):
         print(port)
         SCOK_receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        SCOK_receiver.settimeout(1.0)
         SCOK_receiver.bind((ip, port))
         while self.RECEIVER_FLAG:
-            data, address = SCOK_receiver.recvfrom(1024)
+            try:
+                data, address = SCOK_receiver.recvfrom(1024)
+            except socket.timeout:
+                continue
             mag = data.decode()
         print(port, '监听线程已关闭')
         SCOK_receiver.close()

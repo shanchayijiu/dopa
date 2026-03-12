@@ -477,8 +477,6 @@ class ScreenshotManager:
             if self.enable_parallel_processing:
                 self._start_capture_pipeline()
                 turbo_status = '强制提速' if getattr(self, 'turbo_mode', False) else '标准'
-            elif False:
-                pass
             if self.config.get('infer_debug', False):
                 if self.enable_parallel_processing:
                     self.display_thread = Thread(target=self.display_screenshot_separated)

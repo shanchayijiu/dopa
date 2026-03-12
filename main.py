@@ -1,41 +1,8 @@
 # -*- coding: utf-8 -*-
-import ctypes
-from ctypes import *
-import time
-from queue import Queue
-import _ctypes
-import _queue
-from threading import Thread
-import cv2
-import bettercam
-import win32api
-import win32con
-import win32gui
-from pynput import keyboard, mouse
-from function import *
-from infer_class import *
-import onnxruntime as rt
-from infer_function import *
-import json
-import math
-from cryptography.fernet import Fernet
-import numpy as np
-import requests
-import os
-import random
-import string
-import kmNet
-from dearpygui import dearpygui as dpg
-import base64
-import websocket
-from concurrent.futures import ThreadPoolExecutor
-from pyclick import HumanCurve
-import pydirectinput
-import serial
-import serial.tools.list_ports
-from core import *
 import sys
+import time
 import traceback
+from core import *
 
 
 def global_exception_hook(exctype, value, tb):
