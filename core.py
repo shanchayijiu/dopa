@@ -2148,7 +2148,6 @@ class Valorant:
         return fixed
 
     def infer(self):
-        import numpy as np
         self.time_begin_period(1)
         if self.engine is None:
             model_path = self.config['groups'][self.group]['infer_model']
