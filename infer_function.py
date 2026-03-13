@@ -210,7 +210,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
         w = np.maximum(pred_boxes[:, 2], 0.0)
         h = np.maximum(pred_boxes[:, 3], 0.0)
         nms_boxes = np.stack([cx - w * 0.5, cy - h * 0.5, w, h], axis=1).astype(np.float32)
-    nms_scores = scores.astype(np.float32)
+    nms_scores = np.asarray(scores, dtype=np.float32)
     
     # 3. 执行 NMS
     indices = cv2.dnn.NMSBoxes(nms_boxes, nms_scores, conf_thres, iou_thres)
@@ -218,7 +218,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
     if len(indices) == 0:
         return _EMPTY_NMS_RESULT
 
-    indices = np.array(indices).flatten()
+    indices = np.asarray(indices).ravel()
     
     # 4. 返回结果 (保持 cx, cy, w, h 格式，与原版 nms_v8 一致)
     final_boxes = pred_boxes[indices]
