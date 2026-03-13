@@ -72,7 +72,7 @@ class STrack:
     @property
     def velocity(self):
         """返回 (vx, vy) 像素/帧"""
-        return self._velocity.copy()
+        return self._velocity
 
     def predict(self):
         """用匀速模型预测下一帧位置（原地平移 bbox）"""
