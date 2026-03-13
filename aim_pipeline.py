@@ -20,6 +20,10 @@ class KalmanPredictor2D:
         self.measurement_noise = float(measurement_noise)
         self.max_tracks = int(max_tracks)
         self._tracks = {}  # track_id -> {x, P, last_time}
+        # 预计算常量矩阵，避免每帧重建
+        self._H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=np.float64)
+        self._R = np.array([[self.measurement_noise, 0], [0, self.measurement_noise]], dtype=np.float64)
+        self._I4 = np.eye(4, dtype=np.float64)
 
     def reset(self):
         self._tracks.clear()
@@ -53,19 +57,12 @@ class KalmanPredictor2D:
         ], dtype=np.float64)
 
     def _get_H(self):
-        """观测矩阵"""
-        return np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-        ], dtype=np.float64)
+        """观测矩阵（预计算）"""
+        return self._H
 
     def _get_R(self):
-        """观测噪声矩阵"""
-        r = self.measurement_noise
-        return np.array([
-            [r, 0],
-            [0, r],
-        ], dtype=np.float64)
+        """观测噪声矩阵（预计算）"""
+        return self._R
 
     def update(self, track_id, mx, my):
         """
@@ -112,7 +109,7 @@ class KalmanPredictor2D:
             K = np.zeros((4, 2), dtype=np.float64)
 
         x_new = x_pred + K @ y_res
-        P_new = (np.eye(4) - K @ H) @ P_pred
+        P_new = (self._I4 - K @ H) @ P_pred
 
         trk['x'] = x_new
         trk['P'] = P_new
