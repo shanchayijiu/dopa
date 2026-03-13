@@ -42,6 +42,7 @@ class STrack:
         # EMA 平滑速度估计 (像素/帧)
         self._velocity = np.zeros(2, dtype=np.float32)
         self._vel_alpha = 0.15  # EMA 平滑系数，越小越平滑
+        self._center_cache = None  # 缓存 center 计算结果
 
     @staticmethod
     def reset_id():
@@ -55,10 +56,12 @@ class STrack:
 
     @property
     def center(self):
-        return np.array([
-            (self.bbox[0] + self.bbox[2]) * 0.5,
-            (self.bbox[1] + self.bbox[3]) * 0.5,
-        ], dtype=np.float32)
+        if self._center_cache is None:
+            self._center_cache = np.array([
+                (self.bbox[0] + self.bbox[2]) * 0.5,
+                (self.bbox[1] + self.bbox[3]) * 0.5,
+            ], dtype=np.float32)
+        return self._center_cache
 
     @property
     def wh(self):
@@ -82,6 +85,7 @@ class STrack:
             cx - w * 0.5, cy - h * 0.5,
             cx + w * 0.5, cy + h * 0.5,
         ], dtype=np.float32)
+        self._center_cache = None
 
     def activate(self, frame_id):
         """激活新轨迹"""
@@ -96,6 +100,7 @@ class STrack:
         """重新激活丢失的轨迹"""
         old_center = self.center.copy()
         self.bbox = np.array(new_det.bbox, dtype=np.float32)
+        self._center_cache = None
         self.score = new_det.score
         self.class_id = new_det.class_id
         new_center = self.center
@@ -110,6 +115,7 @@ class STrack:
         """用新检测更新轨迹"""
         old_center = self.center.copy()
         self.bbox = np.array(new_det.bbox, dtype=np.float32)
+        self._center_cache = None
         self.score = new_det.score
         self.class_id = new_det.class_id
         new_center = self.center
@@ -183,16 +189,17 @@ def _linear_assignment(cost_matrix, thresh):
     row_indices, col_indices = linear_sum_assignment(cost_matrix)
 
     matches = []
-    unmatched_rows = list(range(cost_matrix.shape[0]))
-    unmatched_cols = list(range(cost_matrix.shape[1]))
+    matched_rows = set()
+    matched_cols = set()
 
     for r, c in zip(row_indices, col_indices):
         if cost_matrix[r, c] <= thresh:
             matches.append((r, c))
-            if r in unmatched_rows:
-                unmatched_rows.remove(r)
-            if c in unmatched_cols:
-                unmatched_cols.remove(c)
+            matched_rows.add(r)
+            matched_cols.add(c)
+
+    unmatched_rows = [i for i in range(cost_matrix.shape[0]) if i not in matched_rows]
+    unmatched_cols = [j for j in range(cost_matrix.shape[1]) if j not in matched_cols]
 
     return matches, unmatched_rows, unmatched_cols
 

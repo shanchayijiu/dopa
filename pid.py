@@ -202,6 +202,42 @@ class DualAxisPID:
         
         return (final_x, final_y)
 
+    def _apply_limits_and_anti_windup(self, axis, unsat_value):
+        value = unsat_value
+        saturated = False
+        limits = self.output_limits.get(axis)
+        if limits is not None:
+            min_out, max_out = limits
+            if value > max_out:
+                value = max_out
+                saturated = True
+            elif value < min_out:
+                value = min_out
+                saturated = True
+        if saturated:
+            if self.anti_windup_mode == 'backcalc':
+                self._i_term[axis] += self.backcalc_gain[axis] * (value - unsat_value)
+            else:
+                self._i_term[axis] -= self._last_integral_increment[axis]
+            if self.windup_guard[axis] > 0:
+                if self._i_term[axis] > self._i_max[axis]:
+                    self._i_term[axis] = self._i_max[axis]
+                    return value
+                if self._i_term[axis] < self._i_min[axis]:
+                    self._i_term[axis] = self._i_min[axis]
+        return value
+
+    @staticmethod
+    def _final_clamp(limits, value):
+        if limits is None:
+            return value
+        min_out, max_out = limits
+        if value > max_out:
+            return max_out
+        if value < min_out:
+            return min_out
+        return value
+
     def compute(self, error_x, error_y):
         """
         计算双轴PID输出
@@ -230,33 +266,8 @@ class DualAxisPID:
         x_output_unsat = self._calculate_output('x', error_x, delta_time)
         y_output_unsat = self._calculate_output('y', error_y, delta_time)
 
-        def _apply_limits_and_anti_windup(axis, unsat_value):
-            value = unsat_value
-            saturated = False
-            limits = self.output_limits.get(axis)
-            if limits is not None:
-                min_out, max_out = limits
-                if value > max_out:
-                    value = max_out
-                    saturated = True
-                elif value < min_out:
-                    value = min_out
-                    saturated = True
-            if saturated:
-                if self.anti_windup_mode == 'backcalc':
-                    self._i_term[axis] += self.backcalc_gain[axis] * (value - unsat_value)
-                else:
-                    self._i_term[axis] -= self._last_integral_increment[axis]
-                if self.windup_guard[axis] > 0:
-                    if self._i_term[axis] > self._i_max[axis]:
-                        self._i_term[axis] = self._i_max[axis]
-                        return value
-                    if self._i_term[axis] < self._i_min[axis]:
-                        self._i_term[axis] = self._i_min[axis]
-            return value
-
-        x_output = _apply_limits_and_anti_windup('x', x_output_unsat)
-        y_output = _apply_limits_and_anti_windup('y', y_output_unsat)
+        x_output = self._apply_limits_and_anti_windup('x', x_output_unsat)
+        y_output = self._apply_limits_and_anti_windup('y', y_output_unsat)
         x_output, y_output = self._apply_smoothing(x_output, y_output, error_x, error_y, delta_time)
         error_magnitude = (error_x ** 2 + error_y ** 2) ** 0.5
         if error_magnitude < 5.0:
@@ -264,19 +275,8 @@ class DualAxisPID:
             x_output *= deadzone_factor
             y_output *= deadzone_factor
 
-        def _final_clamp(axis, value):
-            limits = self.output_limits.get(axis)
-            if limits is None:
-                return value
-            min_out, max_out = limits
-            if value > max_out:
-                return max_out
-            if value < min_out:
-                return min_out
-            return value
-
-        x_output = _final_clamp('x', x_output)
-        y_output = _final_clamp('y', y_output)
+        x_output = self._final_clamp(self.output_limits.get('x'), x_output)
+        y_output = self._final_clamp(self.output_limits.get('y'), y_output)
         # ---- 速度滤波：EMA平滑输出，减少移动抖动 ----
         vf_alpha = max(0.0, min(0.95, self.vel_filter_alpha))
         if vf_alpha > 0.001:

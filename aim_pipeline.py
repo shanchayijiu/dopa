@@ -865,11 +865,10 @@ class AimPipeline:
 
             # ---- 通过 ByteTracker 获取稳定 track_id ----
             if self.tracker_enabled and len(det_boxes) > 0:
-                import numpy as _np
                 tracks = self.tracker.update(
-                    _np.array(det_boxes, dtype=_np.float32),
-                    _np.array(det_scores, dtype=_np.float32),
-                    _np.array(det_class_ids, dtype=_np.int32),
+                    np.array(det_boxes, dtype=np.float32),
+                    np.array(det_scores, dtype=np.float32),
+                    np.array(det_class_ids, dtype=np.int32),
                 )
                 # 将 track 与最近的 det_meta 关联（贪心去重）
                 targets = []

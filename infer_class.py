@@ -88,9 +88,10 @@ class NMSProcessor:
         return 'v8'
 
     def _generate_cache_key(self, pred: np.ndarray, conf_thres: float, iou_thres: float, algorithm: str) -> str:
-        """生成缓存键"""
-        pred_hash = hash(pred.tobytes()) if hasattr(pred, 'tobytes') else hash(str(pred))
-        return f'{algorithm}_{conf_thres}_{iou_thres}_{pred_hash}'
+        """生成缓存键（使用形状+首尾采样避免全量哈希）"""
+        shape_key = pred.shape if hasattr(pred, 'shape') else len(pred)
+        pred_id = id(pred)
+        return f'{algorithm}_{conf_thres}_{iou_thres}_{shape_key}_{pred_id}'
 
     def _update_performance_stats(self, algorithm: str, processing_time: float, result_count: int):
         """更新性能统计"""

@@ -216,9 +216,8 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
     x = cx - w / 2
     y = cy - h / 2
     
-    # 转换为 list 供 OpenCV 使用
-    nms_boxes = np.stack([x, y, w, h], axis=1).tolist()
-    nms_scores = scores.tolist()
+    nms_boxes = np.stack([x, y, w, h], axis=1).astype(np.float32)
+    nms_scores = scores.astype(np.float32)
     
     # 3. 执行 NMS
     indices = cv2.dnn.NMSBoxes(nms_boxes, nms_scores, conf_thres, iou_thres)
