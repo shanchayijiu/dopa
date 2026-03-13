@@ -826,6 +826,8 @@ class AimPipeline:
             det_scores = []
             det_class_ids = []
             det_meta = []  # 保存每个检测的元信息
+            _id_left = float(identify_left)
+            _id_top = float(identify_top)
             for i in range(len(aim_targets)):
                 item = aim_targets[i]
                 result_center_x, result_center_y, width, height = item
@@ -850,14 +852,18 @@ class AimPipeline:
                     size_boost *= large_target_boost
                 final_size_score = relative_size * size_boost
 
-                px = float(identify_left) + float(result_center_x)
-                py = float(identify_top) + (float(result_center_y) - float(height) / 2.0) + max(float(height) * float(aim_position), float(min_position_offset))
+                f_cx = float(result_center_x)
+                f_cy = float(result_center_y)
+                f_w = float(width)
+                f_h = float(height)
+                px = _id_left + f_cx
+                py = _id_top + (f_cy - f_h * 0.5) + max(f_h * float(aim_position), float(min_position_offset))
 
                 # 屏幕坐标系下的检测框
-                sx1 = float(identify_left) + float(result_center_x) - float(width) * 0.5
-                sy1 = float(identify_top) + float(result_center_y) - float(height) * 0.5
-                sx2 = sx1 + float(width)
-                sy2 = sy1 + float(height)
+                sx1 = _id_left + f_cx - f_w * 0.5
+                sy1 = _id_top + f_cy - f_h * 0.5
+                sx2 = sx1 + f_w
+                sy2 = sy1 + f_h
                 det_boxes.append([sx1, sy1, sx2, sy2])
                 det_scores.append(1.0)  # YOLO 后已过滤, 此处统一给 1.0
                 det_class_ids.append(class_id)
@@ -868,8 +874,8 @@ class AimPipeline:
                     'relative_size': relative_size,
                     'class_id': class_id,
                     'aim_position': aim_position,
-                    'box_w': float(width),
-                    'box_h': float(height),
+                    'box_w': f_w,
+                    'box_h': f_h,
                 })
 
             # ---- 通过 ByteTracker 获取稳定 track_id ----
