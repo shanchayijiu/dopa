@@ -324,11 +324,8 @@ class AimPipeline:
         return v
 
     def _reset_pid_integral(self):
-        if hasattr(self.pid, '_i_term') and isinstance(self.pid._i_term, dict):
-            if 'x' in self.pid._i_term:
-                self.pid._i_term['x'] = 0
-            if 'y' in self.pid._i_term:
-                self.pid._i_term['y'] = 0
+        self.pid._i_term['x'] = 0
+        self.pid._i_term['y'] = 0
 
     def _coerce_boxes(self, boxes):
         if boxes is None:
