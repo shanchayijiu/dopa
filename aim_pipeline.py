@@ -24,6 +24,7 @@ class KalmanPredictor2D:
         self._H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=np.float64)
         self._R = np.array([[self._measurement_noise, 0], [0, self._measurement_noise]], dtype=np.float64)
         self._I4 = np.eye(4, dtype=np.float64)
+        self._F_template = np.eye(4, dtype=np.float64)
 
     @property
     def measurement_noise(self):
@@ -46,13 +47,11 @@ class KalmanPredictor2D:
         return state, P
 
     def _get_F(self, dt):
-        """状态转移矩阵 (恒速模型)"""
-        return np.array([
-            [1, 0, dt, 0],
-            [0, 1, 0, dt],
-            [0, 0, 1,  0],
-            [0, 0, 0,  1],
-        ], dtype=np.float64)
+        """状态转移矩阵 (恒速模型) — 复用预分配模板"""
+        F = self._F_template.copy()
+        F[0, 2] = dt
+        F[1, 3] = dt
+        return F
 
     def _get_Q(self, dt):
         """过程噪声矩阵"""
