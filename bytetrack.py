@@ -63,13 +63,6 @@ class STrack:
         return self._center_cache
 
     @property
-    def wh(self):
-        return np.array([
-            self.bbox[2] - self.bbox[0],
-            self.bbox[3] - self.bbox[1],
-        ], dtype=np.float32)
-
-    @property
     def velocity(self):
         """返回 (vx, vy) 像素/帧"""
         return self._velocity
