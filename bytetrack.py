@@ -253,16 +253,16 @@ class ByteTracker:
             self._remove_expired_lost()
             return self._output_stracks()
 
-        boxes = np.array(boxes, dtype=np.float32)
+        boxes = np.asarray(boxes, dtype=np.float32)
         n = len(boxes)
         if scores is None:
             scores = np.ones(n, dtype=np.float32)
         else:
-            scores = np.array(scores, dtype=np.float32)
+            scores = np.asarray(scores, dtype=np.float32)
         if class_ids is None:
             class_ids = np.zeros(n, dtype=np.int32)
         else:
-            class_ids = np.array(class_ids, dtype=np.int32)
+            class_ids = np.asarray(class_ids, dtype=np.int32)
 
         # 创建检测对象
         detections = []
