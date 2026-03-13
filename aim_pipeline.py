@@ -17,13 +17,24 @@ class KalmanPredictor2D:
 
     def __init__(self, process_noise=1.0, measurement_noise=5.0, max_tracks=64):
         self.process_noise = float(process_noise)
-        self.measurement_noise = float(measurement_noise)
+        self._measurement_noise = float(measurement_noise)
         self.max_tracks = int(max_tracks)
         self._tracks = {}  # track_id -> {x, P, last_time}
         # 预计算常量矩阵，避免每帧重建
         self._H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=np.float64)
-        self._R = np.array([[self.measurement_noise, 0], [0, self.measurement_noise]], dtype=np.float64)
+        self._R = np.array([[self._measurement_noise, 0], [0, self._measurement_noise]], dtype=np.float64)
         self._I4 = np.eye(4, dtype=np.float64)
+
+    @property
+    def measurement_noise(self):
+        return self._measurement_noise
+
+    @measurement_noise.setter
+    def measurement_noise(self, value):
+        value = float(value)
+        if value != self._measurement_noise:
+            self._measurement_noise = value
+            self._R = np.array([[value, 0], [0, value]], dtype=np.float64)
 
     def reset(self):
         self._tracks.clear()
