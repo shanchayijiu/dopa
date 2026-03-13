@@ -200,22 +200,26 @@ cfg.json (持久化)
 
 ### 5.1 紧耦合
 
-- **`core.py` 过于庞大**（~7800 行）：同时承担 GUI、配置、推理调度、控制逻辑、设备管理、闪光弹检测等职责，严重违反单一职责原则
+- **`core.py` 过于庞大**（~7400 行）：同时承担 GUI、配置、推理调度、控制逻辑、设备管理、闪光弹检测等职责，严重违反单一职责原则
 - `Valorant` 类持有近 200 个实例属性，理解和维护成本高
 
 ### 5.2 模块边界不清
 
-- `aim_pipeline.py` 已开始从 `core.py` 解耦瞄准逻辑，但 `core.py` 仍保留了大量旧的目标选择代码作为兜底
+- `aim_pipeline.py` 已从 `core.py` 解耦瞄准逻辑，`aim_bot_func` 统一走 pipeline 路径
 - 触发器逻辑、闪光弹逻辑仍嵌入在 `core.py` 中
 
 ### 5.3 冗余逻辑
 
-- `aim_bot_func()` 中存在 `aim_pipeline` 路径和旧版手动计算路径的双重逻辑
-- `function.py` 和 `core.py` 中各有一份 `key2str()` 函数
 - NMS 处理有 `nms_v8`、`nms_v5`、`nms` 三种实现
 
 ### 5.4 代码质量
 
-- `buff.py`（~2500 行）为验证系统已禁用但仍保留
-- 部分代码有 `# inserted` 注释（反编译痕迹）
-- 异常捕获中大量裸 `except` 可能隐藏错误
+- 异常捕获中大量 `except Exception` 可能隐藏错误（core.py 约 139 处）
+
+### 5.5 已修复的历史问题
+
+- ✅ `aim_bot_func` 双路径 → 已合并为 pipeline 单路径
+- ✅ `key2str` 重复定义 → 已统一至 function.py
+- ✅ `buff.py` ~2500 行死代码 → 已精简为 76 行存根
+- ✅ `# inserted` 反编译痕迹 → 已全部清除
+- ✅ `select_target_by_priority` 冗余 → 已从 core.py 移除

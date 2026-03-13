@@ -1616,64 +1616,6 @@ class Valorant:
                 smoothed_targets.append(target)
         return smoothed_targets
 
-    def select_target_by_priority(self, targets):
-        """[已废弃] 旧版目标选择 - 功能已迁移至 aim_pipeline.select_target_by_priority()"""
-        if not targets:
-            if self.last_target_count > 0:
-                self.last_target_count = 0
-                self.last_target_count_by_class.clear()
-                if hasattr(self, 'aim_pid'):
-                    self.aim_pid._i_term['x'] = 0
-                    self.aim_pid._i_term['y'] = 0
-            return None
-        aim_scope = self.get_dynamic_aim_scope()
-        valid_targets = []
-        center_x, center_y = self.get_current_aim_center()
-        for target in targets:
-            dx = target['pos'][0] - center_x
-            dy = target['pos'][1] - center_y
-            distance = (dx * dx + dy * dy) ** 0.5
-            if distance <= aim_scope:
-                target['distance_to_center'] = distance
-                valid_targets.append(target)
-        if not valid_targets:
-            if self.last_target_count > 0:
-                self.last_target_count = 0
-                self.last_target_count_by_class.clear()
-                if hasattr(self, 'aim_pid'):
-                    self.aim_pid._i_term['x'] = 0
-                    self.aim_pid._i_term['y'] = 0
-                    print('目标移出范围，重置PID积分项')
-            return None
-        target_switch_delay = self.pressed_key_config.get('target_switch_delay', 0)
-        reference_class = self.pressed_key_config.get('target_reference_class', 0)
-        current_total_count = len(valid_targets)
-        prev_total_count = self.last_target_count
-        current_target_count = len([t for t in valid_targets if t.get('class_id') == reference_class])
-        last_count = self.last_target_count_by_class.get(reference_class, 0)
-        if target_switch_delay > 0 and (not self.is_waiting_for_switch) and (prev_total_count > 1) and (current_total_count < prev_total_count):
-            self.is_waiting_for_switch = True
-            self.target_switch_time = time.time() * 1000
-            if hasattr(self, 'aim_pid'):
-                self.aim_pid._i_term['x'] = 0
-                self.aim_pid._i_term['y'] = 0
-            return None
-        if self.is_waiting_for_switch and current_total_count > prev_total_count:
-            self.is_waiting_for_switch = False
-        if target_switch_delay == 0 and current_total_count < prev_total_count and (prev_total_count > 0) and hasattr(self, 'aim_pid'):
-            self.aim_pid._i_term['x'] = 0
-            self.aim_pid._i_term['y'] = 0
-        if self.is_waiting_for_switch:
-            current_time = time.time() * 1000
-            if current_time - self.target_switch_time >= target_switch_delay:
-                self.is_waiting_for_switch = False
-            else:
-                return None
-        self.last_target_count_by_class[reference_class] = current_target_count
-        self.last_target_count = current_total_count
-        valid_targets.sort(key=lambda x: x['distance_to_center'])
-        return valid_targets[0]
-
     def get_current_aim_center(self):
         cfg = self.config.get('crosshair_color_lock', {})
         if isinstance(cfg, dict) and cfg.get('enabled'):
@@ -2084,55 +2026,9 @@ class Valorant:
         if self.aim_key_status:
             try:
                 aim_data = self.que_aim.get_nowait()
-                if isinstance(aim_data, dict) and hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
-                    try:
-                        aim_bot_scope = float(self.get_dynamic_aim_scope())
-                    except Exception:
-                        aim_bot_scope = 0
-                    cx, cy = self.get_current_aim_center()
-                    if hasattr(self, 'engine') and self.engine:
-                        model_width = self.engine.get_input_shape()[3]
-                        model_height = self.engine.get_input_shape()[2]
-                        model_area = model_width * model_height
-                    else:
-                        model_area = 102400
-                    current_key = self.old_pressed_aim_key
-                    auto_y = False
-                    if current_key in self.aim_keys_dist:
-                        auto_y = bool(self.aim_keys_dist[current_key].get('auto_y', False))
-                    move = self.aim_pipeline.step_frame(
-                        frame_payload=aim_data,
-                        pressed_key_config=self.pressed_key_config,
-                        cfg=self.config,
-                        center_xy=(cx, cy),
-                        aim_scope=aim_bot_scope,
-                        identify_left=self.identify_rect_left,
-                        identify_top=self.identify_rect_top,
-                        model_area=model_area,
-                        auto_y=auto_y,
-                        left_pressed_long=self.left_pressed_long,
-                        debug=self.debug_prediction,
-                    )
-                    if move is not None:
-                        self.execute_move(move[0], move[1])
-                    elif crosshair_enabled and only_when_aiming:
-                        self._try_crosshair_pull(crosshair_cfg)
-                    return
-                if isinstance(aim_data, dict):
-                    boxes = aim_data.get('boxes')
-                    class_ids = aim_data.get('class_ids', [])
-                    aim_targets = boxes if boxes is not None else []
-                elif isinstance(aim_data, tuple):
-                    aim_targets, class_ids = aim_data
-                else:
-                    aim_targets = aim_data
-                    class_ids = []
             except queue.Empty:
-                aim_targets = []
-                class_ids = []
-            nearest = None
-            did_move = False
-            if len(aim_targets):
+                aim_data = None
+            if isinstance(aim_data, dict):
                 try:
                     aim_bot_scope = float(self.get_dynamic_aim_scope())
                 except Exception:
@@ -2144,34 +2040,27 @@ class Valorant:
                     model_area = model_width * model_height
                 else:
                     model_area = 102400
-                if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
-                    current_key = self.old_pressed_aim_key
-                    auto_y = False
-                    if current_key in self.aim_keys_dist:
-                        auto_y = bool(self.aim_keys_dist[current_key].get('auto_y', False))
-                    move = self.aim_pipeline.step_aim(
-                        aim_targets=aim_targets,
-                        class_ids=class_ids,
-                        identify_left=self.identify_rect_left,
-                        identify_top=self.identify_rect_top,
-                        pressed_key_config=self.pressed_key_config,
-                        cfg=self.config,
-                        aim_scope=aim_bot_scope,
-                        center_xy=(cx, cy),
-                        model_area=model_area,
-                        auto_y=auto_y,
-                        left_pressed_long=self.left_pressed_long,
-                    )
-                    if move is not None:
-                        did_move = True
-                        self.execute_move(move[0], move[1])
-                else:
-                    # [已废弃] 旧版手动目标选择路径 — aim_pipeline 应始终可用
-                    print('[警告] aim_pipeline 未初始化，跳过手动瞄准（旧路径已废弃）')
-                if (not did_move) and crosshair_enabled and only_when_aiming:
+                current_key = self.old_pressed_aim_key
+                auto_y = False
+                if current_key in self.aim_keys_dist:
+                    auto_y = bool(self.aim_keys_dist[current_key].get('auto_y', False))
+                move = self.aim_pipeline.step_frame(
+                    frame_payload=aim_data,
+                    pressed_key_config=self.pressed_key_config,
+                    cfg=self.config,
+                    center_xy=(cx, cy),
+                    aim_scope=aim_bot_scope,
+                    identify_left=self.identify_rect_left,
+                    identify_top=self.identify_rect_top,
+                    model_area=model_area,
+                    auto_y=auto_y,
+                    left_pressed_long=self.left_pressed_long,
+                    debug=self.debug_prediction,
+                )
+                if move is not None:
+                    self.execute_move(move[0], move[1])
+                elif crosshair_enabled and only_when_aiming:
                     self._try_crosshair_pull(crosshair_cfg)
-            else:
-                pass
         elif crosshair_enabled and not only_when_aiming:
             self._try_crosshair_pull(crosshair_cfg)
 
@@ -7372,6 +7261,15 @@ class Valorant:
             self.move_r(round(relative_move_x), round(relative_move_y))
             return (relative_move_x, relative_move_y)
 
+    def migrate_auto_y_config(self):
+        """迁移auto_y从组级别配置到按键级别配置，确保向后兼容性"""
+        for group_key, group_data in self.config['groups'].items():
+            if 'auto_y' in group_data:
+                group_auto_y = group_data['auto_y']
+                for key_name, key_data in group_data['aim_keys'].items():
+                    if 'auto_y' not in key_data:
+                        key_data['auto_y'] = group_auto_y
+
     def is_using_dopa_model(self):
         """\n        检查当前是否使用ZTX模型（包括ZTX的TRT版本）\n        注意：背闪功能只对ZTX模型有效\n        \n        Returns:\n            bool: 如果当前使用ZTX模型返回True，否则返回False\n        """
         try:
@@ -7405,12 +7303,12 @@ class Valorant:
                 return False
             current_model = self.config['groups'][self.group].get('infer_model', '')
             original_model = self.config['groups'][self.group].get('original_infer_model', '')
-            is_encrypted_original = current_model.endswith('.ZTX') or current_model.endswith('.ZTX') or original_model.endswith('.ZTX') or original_model.endswith('.ZTX')
+            is_encrypted_original = current_model.endswith('.ZTX') or original_model.endswith('.ZTX')
             is_encrypted_trt = False
             if current_model.endswith('.engine'):
-                if original_model.endswith('.ZTX') or original_model.endswith('.ZTX'):
+                if original_model.endswith('.ZTX'):
                     is_encrypted_trt = True
-                elif 'ZTX' in current_model.lower() or 'ZTX' in current_model.lower():
+                elif 'ztx' in current_model.lower():
                     is_encrypted_trt = True
             if is_encrypted_original and self.decrypted_model_data is not None:
                 return True
@@ -7454,12 +7352,3 @@ if __name__ == '__main__':
         with open('error_log.txt', 'w', encoding='utf-8') as f:
             f.write(traceback.format_exc())
         print('程序发生错误，详细信息已写入 error_log.txt。请将该文件反馈给开发者。')
-
-    def migrate_auto_y_config(self):
-        """\n        迁移auto_y从组级别配置到按键级别配置\n        确保向后兼容性，处理可能没有此配置的旧配置\n        """
-        for group_key, group_data in self.config['groups'].items():
-            if 'auto_y' in group_data:
-                group_auto_y = group_data['auto_y']
-                for key_name, key_data in group_data['aim_keys'].items():
-                    if 'auto_y' not in key_data:
-                        key_data['auto_y'] = group_auto_y
