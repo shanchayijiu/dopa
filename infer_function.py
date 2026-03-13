@@ -321,11 +321,8 @@ def read_img(img_data, size=(320, 320)):
     target_w, target_h = size
     if NUMBA_AVAILABLE and target_w == 640 and (target_h == 640):
         try:
-            resized_img = cv2.resize(img_data, (target_w, target_h))
-            normalized_img = numba_convert_new_array(resized_img)
-            processed_img = normalized_img[:, :, [2, 1, 0]]
-            blob = np.transpose(processed_img, (2, 0, 1))
-            blob = np.expand_dims(blob, axis=0)
+            normalized_img = numba_resize_and_normalize(img_data, target_h, target_w)
+            blob = np.expand_dims(normalized_img.transpose(2, 0, 1), axis=0)
             return blob
         except Exception as e:
             print(f'numba预处理回退: {e}')
