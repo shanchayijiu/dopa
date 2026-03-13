@@ -2304,12 +2304,11 @@ class Valorant:
                         aim_boxes = aim_boxes[mask]
                     class_ids = all_class_ids[mask].tolist()
                     if class_confidence_thresholds and len(boxes) > 0:
-                        confidence_mask = []
-                        for i, cls_id in enumerate(class_ids):
-                            cls_conf_thresh = class_confidence_thresholds.get(cls_id, 0.5)
-                            confidence_mask.append(scores[i] >= cls_conf_thresh)
-                        if confidence_mask:
-                            confidence_mask = np.array(confidence_mask, dtype=bool)
+                        # 向量化逐类置信度过滤
+                        _default_conf = 0.5
+                        _thresholds = np.array([class_confidence_thresholds.get(c, _default_conf) for c in class_ids], dtype=np.float32)
+                        confidence_mask = scores >= _thresholds
+                        if not confidence_mask.all():
                             boxes = boxes[confidence_mask]
                             scores = scores[confidence_mask]
                             classes = classes[confidence_mask]
