@@ -2114,8 +2114,7 @@ class Valorant:
 
         # 判断是否更像 xyxy（大部分框满足 x2>x1, y2>y1）
         xyxy_mask = (fixed[:, 2] > fixed[:, 0]) & (fixed[:, 3] > fixed[:, 1])
-        xyxy_ratio = float(np.mean(xyxy_mask)) if len(fixed) > 0 else 0.0
-        if xyxy_ratio > 0.8:
+        if xyxy_mask.sum() > len(fixed) * 0.8:
             x1, y1, x2, y2 = fixed[:, 0], fixed[:, 1], fixed[:, 2], fixed[:, 3]
             w = np.maximum(1e-6, x2 - x1)
             h = np.maximum(1e-6, y2 - y1)
