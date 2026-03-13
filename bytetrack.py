@@ -213,7 +213,6 @@ class ByteTracker:
         self.frame_id = 0
         self.tracked_stracks = []   # 当前跟踪中
         self.lost_stracks = []      # 暂时丢失
-        self.removed_stracks = []   # 已删除
         STrack.reset_id()
 
     def reset(self):
@@ -221,7 +220,6 @@ class ByteTracker:
         self.frame_id = 0
         self.tracked_stracks.clear()
         self.lost_stracks.clear()
-        self.removed_stracks.clear()
         STrack.reset_id()
 
     def update(self, boxes, scores=None, class_ids=None):
