@@ -189,7 +189,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
         xyxy_check = (sample[:, 2] > sample[:, 0]) & (sample[:, 3] > sample[:, 1])
         
         # 如果绝大多数样本满足 x2 > x1 且 y2 > y1，则判定为 xyxy
-        if np.mean(xyxy_check) > 0.9:
+        if xyxy_check.sum() > sample_size * 0.9:
             x1 = pred_boxes[:, 0]
             y1 = pred_boxes[:, 1]
             x2 = pred_boxes[:, 2]
