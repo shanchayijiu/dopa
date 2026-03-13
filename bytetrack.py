@@ -7,7 +7,6 @@ ByteTrack 轻量级多目标跟踪器
 依赖: scipy.optimize.linear_sum_assignment (匈牙利算法)
 """
 
-import time
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
