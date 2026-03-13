@@ -193,32 +193,32 @@ class AimPointResolver:
     def __init__(self, default_randomize=True):
         self.default_randomize = bool(default_randomize)
 
-    def resolve(self, pressed_key_config, class_id):
-        randomize = pressed_key_config.get('randomize_aim_position', self.default_randomize)
-        randomize = bool(randomize)
+    @staticmethod
+    def _pick(a, b, randomize):
+        try:
+            a = float(a)
+        except Exception:
+            a = 0.5
+        try:
+            b = float(b)
+        except Exception:
+            b = 0.5
+        low = min(a, b)
+        high = max(a, b)
+        if randomize and low != high:
+            return random.uniform(low, high)
+        return (low + high) * 0.5
 
-        def _pick(a, b):
-            try:
-                a = float(a)
-            except Exception:
-                a = 0.5
-            try:
-                b = float(b)
-            except Exception:
-                b = 0.5
-            low = min(a, b)
-            high = max(a, b)
-            if randomize and low != high:
-                return random.uniform(low, high)
-            return (low + high) * 0.5
+    def resolve(self, pressed_key_config, class_id):
+        randomize = bool(pressed_key_config.get('randomize_aim_position', self.default_randomize))
 
         if 'class_aim_positions' not in pressed_key_config:
-            return _pick(pressed_key_config.get('aim_bot_position', 0.5), pressed_key_config.get('aim_bot_position2', 0.5))
+            return self._pick(pressed_key_config.get('aim_bot_position', 0.5), pressed_key_config.get('aim_bot_position2', 0.5), randomize)
         class_str = str(class_id)
         if class_str in pressed_key_config['class_aim_positions']:
             cfg = pressed_key_config['class_aim_positions'][class_str]
-            return _pick(cfg.get('aim_bot_position', 0.5), cfg.get('aim_bot_position2', 0.5))
-        return _pick(pressed_key_config.get('aim_bot_position', 0.5), pressed_key_config.get('aim_bot_position2', 0.5))
+            return self._pick(cfg.get('aim_bot_position', 0.5), cfg.get('aim_bot_position2', 0.5), randomize)
+        return self._pick(pressed_key_config.get('aim_bot_position', 0.5), pressed_key_config.get('aim_bot_position2', 0.5), randomize)
 
 
 class AimPipeline:
