@@ -4,6 +4,13 @@ import numpy as np
 # 1.0 / 255 —— 像素归一化因子
 NORMALIZE_FACTOR = 1.0 / 255  # 0.00392156862745098
 
+# NMS 空结果常量，避免每次早返时分配新数组
+_EMPTY_NMS_RESULT = (
+    np.empty((0, 4), dtype=np.float32),
+    np.empty((0,), dtype=np.float32),
+    np.empty((0,), dtype=np.int32),
+)
+
 try:
     import numba as nb
     NUMBA_AVAILABLE = True
@@ -142,7 +149,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
     
     # 维度检查与转置处理
     if pred.ndim != 2:
-        return (np.empty((0, 4), dtype=np.float32), np.empty((0,), dtype=np.float32), np.empty((0,), dtype=np.int32))
+        return _EMPTY_NMS_RESULT
 
     # 兼容 [C,N] / [N,C] 两种布局
     # YOLOv8/v11 默认输出通常是 [C, N] (例如 [84, 8400])，需要转置为 [N, C]
@@ -151,7 +158,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
         pred = pred.T
         
     if pred.shape[1] < 5:
-        return (np.empty((0, 4), dtype=np.float32), np.empty((0,), dtype=np.float32), np.empty((0,), dtype=np.int32))
+        return _EMPTY_NMS_RESULT
 
     # 解析 Box, Score, Class
     # 假设前4列是 cx, cy, w, h
@@ -172,7 +179,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
     # 初步置信度过滤
     valid_mask = scores > conf_thres
     if not np.any(valid_mask):
-        return (np.empty((0, 4), dtype=np.float32), np.empty((0,), dtype=np.float32), np.empty((0,), dtype=np.int32))
+        return _EMPTY_NMS_RESULT
 
     pred_boxes = pred[valid_mask, :4].astype(np.float32)
     scores = scores[valid_mask]
@@ -223,7 +230,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
     indices = cv2.dnn.NMSBoxes(nms_boxes, nms_scores, conf_thres, iou_thres)
 
     if len(indices) == 0:
-        return (np.empty((0, 4), dtype=np.float32), np.empty((0,), dtype=np.float32), np.empty((0,), dtype=np.int32))
+        return _EMPTY_NMS_RESULT
 
     indices = np.array(indices).flatten()
     
