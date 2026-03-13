@@ -174,12 +174,17 @@ cfg.json
 
 | 问题 | 优先级 | 说明 |
 |------|--------|------|
-| core.py 过大 | 高 | 7800 行，应继续拆分 GUI/推理调度/设备管理 |
-| 旧版瞄准逻辑冗余 | 中 | aim_bot_func 中存在 pipeline 和手动计算双路径 |
-| key2str 重复定义 | 低 | function.py 和 core.py 各有一份 |
-| buff.py 死代码 | 低 | ~2500 行验证代码已禁用但仍加载 |
-| 反编译痕迹 | 低 | 部分代码含 `# inserted` 注释 |
-| 裸 except | 中 | 多处裸 `except` 可能隐藏错误 |
+| core.py 过大 | 高 | ~7400 行，应继续拆分 GUI/推理调度/设备管理 |
+| 裸 except | 中 | 多处 `except Exception` 可能隐藏错误（core.py 约 139 处） |
+| NMS 三种实现 | 低 | infer_function.py 中 nms_v8/nms_v5/nms 三种实现并存 |
+
+### 已清理的历史债务
+
+- ✅ `key2str` 重复定义 — 已统一至 `function.py`
+- ✅ `buff.py` 死代码 — 已从 ~2500 行精简为 76 行存根
+- ✅ 反编译痕迹 `# inserted` — 已全部清除
+- ✅ 旧版瞄准逻辑冗余 — `aim_bot_func` 双路径已合并为 pipeline 单路径
+- ✅ 旧版 `select_target_by_priority()` — 已从 core.py 移除，统一使用 aim_pipeline
 
 ---
 
