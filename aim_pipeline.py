@@ -237,6 +237,7 @@ class AimPipeline:
         self._last_output_target_pos = None
         self._aim_position_cache = {}
         self._aim_position_cache_ttl_sec = 2.5
+        self._last_prune_time = 0.0
         self._target_lock_time = 0.0
         # ByteTrack 跟踪器
         self.tracker = ByteTracker(track_thresh=0.5, match_thresh=0.3, track_buffer=30, max_center_dist=80.0)
@@ -302,6 +303,9 @@ class AimPipeline:
 
     def _prune_aim_position_cache(self):
         now = time.time()
+        if now - self._last_prune_time < 1.0:
+            return
+        self._last_prune_time = now
         ttl = float(self._aim_position_cache_ttl_sec)
         for key in list(self._aim_position_cache.keys()):
             item = self._aim_position_cache.get(key)
