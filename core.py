@@ -2003,16 +2003,7 @@ class Valorant:
             desired_mode = 'idle'
             
         if desired_mode != self.control_mode:
-            if desired_mode == 'aim':
-                self.aim_pid.reset()
-                if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
-                    self.aim_pipeline.reset()
-                try:
-                    while not self.que_aim.empty():
-                        self.que_aim.get_nowait()
-                except Exception:
-                    pass
-            elif self.control_mode == 'aim':
+            if desired_mode == 'aim' or self.control_mode == 'aim':
                 self.aim_pid.reset()
                 if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
                     self.aim_pipeline.reset()
