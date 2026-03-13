@@ -75,15 +75,12 @@ class STrack:
         return self._velocity.copy()
 
     def predict(self):
-        """用匀速模型预测下一帧位置"""
-        cx, cy = self.center
-        w, h = self.wh
-        cx += self._velocity[0]
-        cy += self._velocity[1]
-        self.bbox = np.array([
-            cx - w * 0.5, cy - h * 0.5,
-            cx + w * 0.5, cy + h * 0.5,
-        ], dtype=np.float32)
+        """用匀速模型预测下一帧位置（原地平移 bbox）"""
+        vx, vy = self._velocity[0], self._velocity[1]
+        self.bbox[0] += vx
+        self.bbox[1] += vy
+        self.bbox[2] += vx
+        self.bbox[3] += vy
         self._center_cache = None
 
     def activate(self, frame_id):
