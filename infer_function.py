@@ -185,45 +185,31 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
     scores = scores[valid_mask]
     class_ids = class_ids[valid_mask]
 
-    # 1. 统一坐标格式为 cx, cy, w, h
+    # 1. 统一坐标格式为 cx, cy, w, h；同时构建 NMS 输入 [x, y, w, h] (左上角)
     # 自动检测是否为 xyxy 格式 (x1, y1, x2, y2)
+    _is_xyxy = False
     if pred_boxes.shape[0] > 0:
-        # 采样检测，避免全量计算
         sample_size = min(100, pred_boxes.shape[0])
         sample = pred_boxes[:sample_size]
-        # xyxy 特征: x2 > x1 且 y2 > y1
-        # cxcywh 特征: w > 0, h > 0, 但 w > cx 不一定成立
         xyxy_check = (sample[:, 2] > sample[:, 0]) & (sample[:, 3] > sample[:, 1])
-        
-        # 如果绝大多数样本满足 x2 > x1 且 y2 > y1，则判定为 xyxy
-        if xyxy_check.sum() > sample_size * 0.9:
-            x1 = pred_boxes[:, 0]
-            y1 = pred_boxes[:, 1]
-            x2 = pred_boxes[:, 2]
-            y2 = pred_boxes[:, 3]
-            
-            w = x2 - x1
-            h = y2 - y1
-            cx = x1 + w / 2
-            cy = y1 + h / 2
-            
-            # 更新为 cx, cy, w, h
-            pred_boxes = np.stack([cx, cy, w, h], axis=1)
+        _is_xyxy = xyxy_check.sum() > sample_size * 0.9
 
-    # 2. 准备 OpenCV NMS 输入: [x, y, w, h] (左上角坐标)
-    cx = pred_boxes[:, 0]
-    cy = pred_boxes[:, 1]
-    w = pred_boxes[:, 2]
-    h = pred_boxes[:, 3]
-    
-    # 确保宽高非负
-    w = np.maximum(w, 0.0)
-    h = np.maximum(h, 0.0)
-    
-    x = cx - w / 2
-    y = cy - h / 2
-    
-    nms_boxes = np.stack([x, y, w, h], axis=1).astype(np.float32)
+    if _is_xyxy:
+        x1 = pred_boxes[:, 0]
+        y1 = pred_boxes[:, 1]
+        w = pred_boxes[:, 2] - x1
+        h = pred_boxes[:, 3] - y1
+        cx = x1 + w * 0.5
+        cy = y1 + h * 0.5
+        pred_boxes = np.stack([cx, cy, w, h], axis=1)
+        # xyxy 保证 w,h >= 0，直接用 x1,y1 作为左上角
+        nms_boxes = np.stack([x1, y1, w, h], axis=1).astype(np.float32)
+    else:
+        cx = pred_boxes[:, 0]
+        cy = pred_boxes[:, 1]
+        w = np.maximum(pred_boxes[:, 2], 0.0)
+        h = np.maximum(pred_boxes[:, 3], 0.0)
+        nms_boxes = np.stack([cx - w * 0.5, cy - h * 0.5, w, h], axis=1).astype(np.float32)
     nms_scores = scores.astype(np.float32)
     
     # 3. 执行 NMS
