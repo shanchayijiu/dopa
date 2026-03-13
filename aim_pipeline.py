@@ -182,8 +182,8 @@ class AimMoveQuantizer:
         except Exception:
             return dx, dy
 
-        ix = int(math.floor(x)) if x > 0 else int(math.ceil(x))
-        iy = int(math.floor(y)) if y > 0 else int(math.ceil(y))
+        ix = int(x)
+        iy = int(y)
         self._rx = x - ix
         self._ry = y - iy
         return ix, iy
