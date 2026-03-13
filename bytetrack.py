@@ -411,7 +411,6 @@ class ByteTracker:
                 remaining.append(t)
             else:
                 t.mark_removed()
-                self.removed_stracks.append(t)
         self.lost_stracks = remaining
 
     def _output_stracks(self):
