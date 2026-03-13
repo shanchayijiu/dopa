@@ -88,7 +88,7 @@ class STrack:
     def re_activate(self, new_det, frame_id):
         """重新激活丢失的轨迹"""
         old_center = self.center.copy()
-        self.bbox = np.array(new_det.bbox, dtype=np.float32)
+        self.bbox = new_det.bbox  # 直接引用检测 bbox（检测对象不再使用）
         self._center_cache = None
         self.score = new_det.score
         self.class_id = new_det.class_id
@@ -103,7 +103,7 @@ class STrack:
     def update(self, new_det, frame_id):
         """用新检测更新轨迹"""
         old_center = self.center.copy()
-        self.bbox = np.array(new_det.bbox, dtype=np.float32)
+        self.bbox = new_det.bbox  # 直接引用检测 bbox（检测对象不再使用）
         self._center_cache = None
         self.score = new_det.score
         self.class_id = new_det.class_id
