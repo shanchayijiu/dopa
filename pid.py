@@ -1,6 +1,4 @@
 import time
-import math
-from collections import deque
 
 
 class PID:
@@ -98,15 +96,6 @@ class DualAxisPID:
         self.smooth_y = smooth_params[1]
         self.smooth_deadzone = smooth_params[2]
         self.smooth_algorithm = smooth_params[3] if len(smooth_params) > 3 else 1.0
-        self._smooth_history_x = []
-        self._smooth_history_y = []
-        self.history_size = 20
-        self.error_history = deque(maxlen=self.history_size)
-        self.time_history = deque(maxlen=self.history_size)
-        self.uniform_threshold = 1.5
-        self.min_velocity_threshold = 10.0
-        self.max_velocity_threshold = 100.0
-        self.compensation_factor = 2.0
         # ---- 误差滤波 ----
         # 对PID输入误差做EMA平滑，过滤检测框帧间抖动
         self.error_filter_alpha = 0.0    # 0=不滤波(直通), 越大越平滑(0~0.95)
@@ -130,10 +119,6 @@ class DualAxisPID:
         self._i_min = {'x': -self.windup_guard['x'], 'y': -self.windup_guard['y']}
         self._last_integral_increment = {'x': 0, 'y': 0}
         self._last_output = {'x': 0.0, 'y': 0.0}  # Added for smoothing
-        self._smooth_history_x = []
-        self._smooth_history_y = []
-        self.error_history = deque(maxlen=self.history_size)
-        self.time_history = deque(maxlen=self.history_size)
         self._filtered_error = {'x': 0.0, 'y': 0.0}
         self._error_filter_initialized = False
         self._filtered_vel = {'x': 0.0, 'y': 0.0}
