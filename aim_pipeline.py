@@ -652,7 +652,7 @@ class AimPipeline:
 
         current_total_count = len(valid_targets)
         prev_total_count = int(self.last_target_count)
-        current_ref_count = len([t for t in valid_targets if int(t.get('class_id', 0) or 0) == reference_class])
+        current_ref_count = sum(1 for t in valid_targets if int(t.get('class_id', 0) or 0) == reference_class)
 
         if target_switch_delay > 0 and (not self.is_waiting_for_switch) and (prev_total_count > 1) and (current_total_count < prev_total_count):
             self.is_waiting_for_switch = True
