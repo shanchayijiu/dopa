@@ -2035,9 +2035,8 @@ class Valorant:
                     aim_bot_scope = 0
                 cx, cy = self.get_current_aim_center()
                 if hasattr(self, 'engine') and self.engine:
-                    model_width = self.engine.get_input_shape()[3]
-                    model_height = self.engine.get_input_shape()[2]
-                    model_area = model_width * model_height
+                    _shape = self.engine.get_input_shape()
+                    model_area = _shape[3] * _shape[2]
                 else:
                     model_area = 102400
                 current_key = self.old_pressed_aim_key
