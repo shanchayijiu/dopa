@@ -10,6 +10,8 @@ ByteTrack 轻量级多目标跟踪器
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+_ZERO_VEL = np.zeros(2, dtype=np.float32)
+
 
 class STrack:
     """单目标跟踪轨迹"""
@@ -39,7 +41,7 @@ class STrack:
         self.start_frame = 0
         self.tracklet_len = 0
         # EMA 平滑速度估计 (像素/帧)
-        self._velocity = np.zeros(2, dtype=np.float32)
+        self._velocity = _ZERO_VEL  # 被 update/re_activate 时替换为新数组
         self._vel_alpha = 0.15  # EMA 平滑系数，越小越平滑
         self._center_cache = None  # 缓存 center 计算结果
 
