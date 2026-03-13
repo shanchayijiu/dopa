@@ -334,8 +334,8 @@ class ByteTracker:
                 tc = np.array([t.center for t in remaining_tracked], dtype=np.float32)
                 dc = np.array([d.center for d in remaining_high], dtype=np.float32)
                 diff = tc[:, None, :] - dc[None, :, :]
-                dist_mat = np.sum(diff * diff, axis=2)
-                matches_2b, u_tracks_2b, u_dets_2b = _linear_assignment(dist_mat, self.max_center_dist ** 2)
+                dist_mat = np.sqrt(np.sum(diff ** 2, axis=2))
+                matches_2b, u_tracks_2b, u_dets_2b = _linear_assignment(dist_mat, self.max_center_dist)
                 matched_det_set = set()
                 for t_idx, d_idx in matches_2b:
                     track = remaining_tracked[t_idx]
@@ -368,8 +368,8 @@ class ByteTracker:
             track_centers = np.array([t.center for t in unmatched_lost], dtype=np.float32)
             det_centers = np.array([d.center for d in remaining_high_dets], dtype=np.float32)
             diff = track_centers[:, None, :] - det_centers[None, :, :]
-            dist_matrix = np.sum(diff * diff, axis=2)
-            matches_3, _, u_dets_3 = _linear_assignment(dist_matrix, self.max_center_dist ** 2)
+            dist_matrix = np.sqrt(np.sum(diff ** 2, axis=2))
+            matches_3, _, u_dets_3 = _linear_assignment(dist_matrix, self.max_center_dist)
             matched_det_indices = set()
             for t_idx, d_idx in matches_3:
                 track = unmatched_lost[t_idx]
