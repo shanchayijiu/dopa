@@ -2071,31 +2071,21 @@ class Valorant:
         return (ix, iy)
 
     def _execute_move_async(self, relative_move_x, relative_move_y):
-        if self.config['is_curve']:
-            curve = HumanCurve((0, 0), (round(relative_move_x), round(relative_move_y)), offsetBoundaryX=self.config['offset_boundary_x'], offsetBoundaryY=self.config['offset_boundary_y'], knotsCount=self.config['knots_count'], distortionMean=self.config['distortion_mean'], distortionStdev=self.config['distortion_st_dev'], distortionFrequency=self.config['distortion_frequency'], targetPoints=self.config['target_points'])
+        cfg = self.config
+        if cfg['is_curve'] or (cfg['is_curve_uniform'] and self.AimController.is_uniform_motion(cfg['show_motion_speed'])):
+            skip_zero = cfg['is_curve']  # is_curve 跳过零移动, is_curve_uniform 不跳过
+            curve = HumanCurve((0, 0), (round(relative_move_x), round(relative_move_y)), offsetBoundaryX=cfg['offset_boundary_x'], offsetBoundaryY=cfg['offset_boundary_y'], knotsCount=cfg['knots_count'], distortionMean=cfg['distortion_mean'], distortionStdev=cfg['distortion_st_dev'], distortionFrequency=cfg['distortion_frequency'], targetPoints=cfg['target_points'])
             curve = curve.points
             if isinstance(curve, tuple):
                 self._emit_move_rel(relative_move_x, relative_move_y)
             else:
-                if self.config['is_show_curve']:
+                if cfg['is_show_curve']:
                     print(f'曲线点数: {len(curve)}')
                 for i in range(1, len(curve)):
                     x = round(curve[i][0] - curve[i - 1][0])
                     y = round(curve[i][1] - curve[i - 1][1])
-                    if x == 0 and y == 0:
+                    if skip_zero and x == 0 and y == 0:
                         continue
-                    self._emit_move_rel(x, y)
-        elif self.config['is_curve_uniform'] and self.AimController.is_uniform_motion(self.config['show_motion_speed']):
-            curve = HumanCurve((0, 0), (round(relative_move_x), round(relative_move_y)), offsetBoundaryX=self.config['offset_boundary_x'], offsetBoundaryY=self.config['offset_boundary_y'], knotsCount=self.config['knots_count'], distortionMean=self.config['distortion_mean'], distortionStdev=self.config['distortion_st_dev'], distortionFrequency=self.config['distortion_frequency'], targetPoints=self.config['target_points'])
-            curve = curve.points
-            if isinstance(curve, tuple):
-                self._emit_move_rel(relative_move_x, relative_move_y)
-            else:
-                if self.config['is_show_curve']:
-                    print(f'曲线点数: {len(curve)}')
-                for i in range(1, len(curve)):
-                    x = round(curve[i][0] - curve[i - 1][0])
-                    y = round(curve[i][1] - curve[i - 1][1])
                     self._emit_move_rel(x, y)
         else:
             self._emit_move_rel(relative_move_x, relative_move_y)
