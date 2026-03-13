@@ -2305,7 +2305,8 @@ class Valorant:
                 else:
                     all_class_ids = np.argmax(classes, axis=1).astype(int)
                 if selected_classes_set:
-                    mask = np.array([cls_id in selected_classes_set for cls_id in all_class_ids], dtype=bool)
+                    _selected_arr = np.array(list(selected_classes_set), dtype=int)
+                    mask = np.isin(all_class_ids, _selected_arr)
                     boxes = boxes[mask]
                     scores = scores[mask]
                     classes = classes[mask]
