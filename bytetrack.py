@@ -157,8 +157,7 @@ def _iou_batch(bboxes_a, bboxes_b):
     area_b = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
 
     union = area_a[:, None] + area_b[None, :] - inter_area
-    iou = np.where(union > 0, inter_area / union, 0.0)
-    return iou.astype(np.float32)
+    return np.where(union > 0, inter_area / union, 0.0)
 
 
 def _linear_assignment(cost_matrix, thresh):
