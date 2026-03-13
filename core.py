@@ -2100,7 +2100,7 @@ class Valorant:
         if boxes.ndim != 2 or boxes.shape[1] < 4 or len(boxes) == 0:
             return boxes
 
-        fixed = np.nan_to_num(boxes[:, :4].copy(), nan=0.0, posinf=0.0, neginf=0.0)
+        fixed = np.nan_to_num(boxes[:, :4], nan=0.0, posinf=0.0, neginf=0.0)
 
         # 判断是否更像 xyxy（大部分框满足 x2>x1, y2>y1）
         xyxy_mask = (fixed[:, 2] > fixed[:, 0]) & (fixed[:, 3] > fixed[:, 1])
