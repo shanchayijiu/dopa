@@ -1650,7 +1650,8 @@ class Valorant:
         roi = frame[y1:y2, x1:x2]
 
         # 极小 ROI 时跳过高斯模糊，避免准星边缘被吃掉
-        if roi_w <= 30 or roi_h <= 30:
+        _blur_skipped = roi_w <= 30 or roi_h <= 30
+        if _blur_skipped:
             hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
         else:
             roi_blur = cv2.GaussianBlur(roi, (3, 3), 0)
@@ -1728,7 +1729,8 @@ class Valorant:
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._morph_kernel_close_small, iterations=1)
                 # 极少像素时用无模糊 HSV 补回被高斯吃掉的边缘（延迟 cvtColor 到需要时）
                 if pixel_count < small_pixel_thresh // 3:
-                    hsv_raw = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+                    # 未模糊时 hsv 已是原始值，无需重复转换
+                    hsv_raw = hsv if _blur_skipped else cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
                     mask_raw = None
                     for entry in cached_bounds:
                         if entry is None:
