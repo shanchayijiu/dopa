@@ -25,6 +25,7 @@ class KalmanPredictor2D:
         self._R = np.array([[self._measurement_noise, 0], [0, self._measurement_noise]], dtype=np.float64)
         self._I4 = np.eye(4, dtype=np.float64)
         self._F_template = np.eye(4, dtype=np.float64)
+        self._Q_template = np.zeros((4, 4), dtype=np.float64)
 
     @property
     def measurement_noise(self):
@@ -54,17 +55,18 @@ class KalmanPredictor2D:
         return F
 
     def _get_Q(self, dt):
-        """过程噪声矩阵"""
+        """过程噪声矩阵 — 复用预分配模板"""
         q = self.process_noise
         dt2 = dt * dt
         dt3 = dt2 * dt / 2.0
         dt4 = dt2 * dt2 / 4.0
-        return q * np.array([
-            [dt4, 0,   dt3, 0  ],
-            [0,   dt4, 0,   dt3],
-            [dt3, 0,   dt2, 0  ],
-            [0,   dt3, 0,   dt2],
-        ], dtype=np.float64)
+        Q = self._Q_template.copy()
+        Q[0, 0] = dt4; Q[0, 2] = dt3
+        Q[1, 1] = dt4; Q[1, 3] = dt3
+        Q[2, 0] = dt3; Q[2, 2] = dt2
+        Q[3, 1] = dt3; Q[3, 3] = dt2
+        Q *= q
+        return Q
 
     def _get_H(self):
         """观测矩阵（预计算）"""
