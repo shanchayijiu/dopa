@@ -113,8 +113,8 @@ class KalmanPredictor2D:
         P_pred = F @ P @ F.T + Q
 
         # Update
-        H = self._get_H()
-        R = self._get_R()
+        H = self._H
+        R = self._R
         z = self._z_buf
         z[0] = mx; z[1] = my
         y_res = z - H @ x_pred
