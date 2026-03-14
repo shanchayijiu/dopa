@@ -20,6 +20,7 @@ import kmNet
 import numpy as np
 from crosshair_tracker import CrosshairTracker
 from flashbang_handler import FlashbangHandler
+import config_manager as cfgmgr
 import pydirectinput
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -505,123 +506,13 @@ class Valorant:
         self.mouse_re_games_combo = None
         self.mouse_re_guns_combo = None
 
+
     def get_default_config(self):
-        """
-        返回默认配置，用于跳过远程配置验证
-        """
-        default_config = {
-            'enable_parallel_processing': True,
-            'turbo_mode': True,
-            'skip_frame_processing': True,
-            'enable_web_server': False,
-            'inference_device': 'CPU',  # 默认使用CPU，将在初始化时自动选择最佳设备
-            'model_runtime': {
-                'v11_auto_discover': True,
-                'v11_expected_opset': None,
-                'v11_expected_model_version': None,
-                'v11_strict_graph': True,
-                'v11_search_dirs': ['models', 'weights'],
-                'intra_op_num_threads': 0,
-                'inter_op_num_threads': 0,
-                'enable_cpu_mem_arena': True,
-                'enable_mem_pattern': True,
-                'execution_mode': 'sequential',
-                'graph_optimization_level': 'all',
-                'cuda_mem_limit_mb': 0,
-                'arena_extend_strategy': 'kNextPowerOfTwo'
-            },
-            'performance_mode': 'balanced',
-            'use_async_move': False,
-            'frame_skip_ratio': 0,
-            'cpu_optimization': True,
-            'memory_optimization': True,
-            'auto_flashbang': {
-                'enabled': False,
-                'delay_ms': 150,
-                'turn_angle': 90,
-                'sensitivity_multiplier': 2.5,
-                'return_delay': 80,
-                'min_confidence': 0.3,
-                'min_size': 5,
-                'use_curve': True,
-                'curve_speed': 8.0,
-                'curve_knots': 3
-            },
-            'crosshair_color_lock': {
-                'enabled': False,
-                'roi_width': 200,
-                'roi_height': 200,
-                'hsv_ranges': [{'h_min': 0, 'h_max': 179, 's_min': 0, 's_max': 255, 'v_min': 0, 'v_max': 255}],
-                'active_index': 0,
-                'show_crosshair': True,
-                'show_lock_box': True,
-                'min_area': 12,
-                'last_rgb': [0, 0, 0],
-                'pull_k': 0.12,
-                'pull_max_speed': 6.0,
-                'pull_deadzone': 1.0,
-                'ema_smooth': 0.4
-            },
-            'target_sticky_pixels': 40.0,
-            'target_lock_ms': 150.0,
-            'large_target_threshold': 0.055,
-            'large_target_boost': 1.12,
-            'groups': {
-                'default': {
-                    'is_trt': False,
-                    'is_v8': True,
-                    'model_variant': 'onnx',
-                    'infer_model': 'default_model.onnx',
-                    'original_infer_model': 'default_model.onnx',
-                    'aim_keys': {
-                        'mouse1': {
-                            'class_aim_positions': {
-                                'default': {
-                                    'aim_bot_position': 0.0,
-                                    'aim_bot_position2': 0.0,
-                                    'confidence_threshold': 0.5,
-                                    'iou_t': 1.0
-                                }
-                            },
-                            'pid_params': {
-                                'smooth_deadzone': 0.0,
-                                'move_deadzone': 1.0
-                            }
-                        }
-                    }
-                }
-            },
-            'picked_game': 'default_game',
-            'games': {
-                'default_game': {
-                    'name': '默认游戏'
-                }
-            },
-            'move_method': 'send_input',
-            'game_sensitivity': 1.0,
-            'mouse_dpi': 800,
-            'gui_dpi_scale': 1.0,
-            'distance_scoring_weight': 0.6,
-            'center_scoring_weight': 0.3,
-            'size_scoring_weight': 0.1
-        }
-        
         print('使用默认配置，跳过远程验证')
-        return default_config
+        return cfgmgr.get_default_config()
 
     def read_local_cfg(self):
-        """
-        读取本地cfg.json配置文件
-        """
-        try:
-            if os.path.exists('cfg.json'):
-                with open('cfg.json', 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    print('成功读取cfg.json配置文件')
-                    return config
-        except Exception as e:
-            print(f'读取cfg.json文件失败: {e}')
-        return None
+        return cfgmgr.read_local_cfg()
 
     def _change_callback(self, path, value):
         if path == 'inference':
@@ -2169,16 +2060,7 @@ class Valorant:
         return True
 
     def _ensure_model_runtime_defaults(self, config):
-        runtime_cfg = config.get('model_runtime')
-        if not isinstance(runtime_cfg, dict):
-            runtime_cfg = {}
-            config['model_runtime'] = runtime_cfg
-        defaults = get_default_runtime_config()
-        for key, value in defaults.items():
-            runtime_cfg.setdefault(key, copy.deepcopy(value))
-        if not isinstance(runtime_cfg.get('v11_search_dirs'), list):
-            runtime_cfg['v11_search_dirs'] = ['models', 'weights']
-        return runtime_cfg
+        return cfgmgr.ensure_model_runtime_defaults(config, get_default_runtime_config)
 
     def _prepare_v11onnx_group_model(self, group_name, group_val):
         if not should_use_v11onnx(group_val, os.environ):
@@ -2241,46 +2123,14 @@ class Valorant:
             if config is None:
                 print('cfg.json文件不存在，使用默认配置')
                 config = self.get_default_config()
-        if 'enable_parallel_processing' not in config:
-            config['enable_parallel_processing'] = True
-        if 'turbo_mode' not in config:
-            config['turbo_mode'] = True
-        if 'skip_frame_processing' not in config:
-            config['skip_frame_processing'] = True
-        if 'performance_mode' not in config:
-            config['performance_mode'] = 'balanced'
-        if 'use_async_move' not in config:
-            config['use_async_move'] = False
-        if 'frame_skip_ratio' not in config:
-            config['frame_skip_ratio'] = 0
-        if 'cpu_optimization' not in config:
-            config['cpu_optimization'] = True
-        if 'memory_optimization' not in config:
-            config['memory_optimization'] = True
+        cfgmgr.ensure_defaults(config)
         self._ensure_model_runtime_defaults(config)
-        if 'auto_flashbang' not in config:
-            config['auto_flashbang'] = {'enabled': False, 'delay_ms': 150, 'turn_angle': 90, 'sensitivity_multiplier': 2.5, 'return_delay': 80, 'min_confidence': 0.3, 'min_size': 5, 'use_curve': True, 'curve_speed': 8.0, 'curve_knots': 3}
-        if 'crosshair_color_lock' not in config:
-            config['crosshair_color_lock'] = {'enabled': False, 'roi_width': 200, 'roi_height': 200, 'hsv_ranges': [{'h_min': 0, 'h_max': 179, 's_min': 0, 's_max': 255, 'v_min': 0, 'v_max': 255}], 'active_index': 0, 'show_crosshair': True, 'show_lock_box': True, 'min_area': 12, 'last_rgb': [0, 0, 0], 'pull_k': 0.12, 'pull_max_speed': 6.0, 'pull_deadzone': 1.0, 'ema_smooth': 0.4}
-        else:
+        if 'crosshair_color_lock' in config:
             crosshair_cfg = config['crosshair_color_lock']
             if not isinstance(crosshair_cfg, dict):
                 crosshair_cfg = {}
                 config['crosshair_color_lock'] = crosshair_cfg
             crosshair_cfg = self._ensure_crosshair_hsv_ranges(crosshair_cfg)
-        crosshair_cfg = config.get('crosshair_color_lock', {})
-        if isinstance(crosshair_cfg, dict):
-            crosshair_cfg.setdefault('pull_k', 0.12)
-            crosshair_cfg.setdefault('pull_max_speed', 6.0)
-            crosshair_cfg.setdefault('pull_deadzone', 1.0)
-        config.setdefault('target_sticky_pixels', 40.0)
-        config.setdefault('target_lock_ms', 150.0)
-        config.setdefault('large_target_threshold', 0.055)
-        config.setdefault('large_target_boost', 1.12)
-        config.setdefault('target_id_lock_enabled', True)
-        config.setdefault('kalman', {})
-        config['kalman'].setdefault('enabled', True)
-        config['kalman'].setdefault('predict_frames', 5)
         for group_key, group_val in config.get('groups', {}).items():
             if 'is_trt' not in group_val:
                 group_val['is_trt'] = False
@@ -2406,32 +2256,7 @@ class Valorant:
             traceback.print_exc()
 
     def migrate_config_to_class_based(self, config):
-        """迁移配置：将全局的置信阈值和IOU配置迁移到基于类别的配置"""
-        try:
-            for group_name, group_config in config.get('groups', {}).items():
-                for key_name, key_config in group_config.get('aim_keys', {}).items():
-                    old_conf_thresh = key_config.get('confidence_threshold')
-                    old_iou_t = key_config.get('iou_t')
-                    if old_conf_thresh is not None or old_iou_t is not None:
-                        if 'class_aim_positions' not in key_config:
-                            key_config['class_aim_positions'] = {}
-                        class_aim_positions = key_config['class_aim_positions']
-                        if isinstance(class_aim_positions, list):
-                            key_config['class_aim_positions'] = {}
-                            class_aim_positions = {}
-                        elif not isinstance(class_aim_positions, dict):
-                            key_config['class_aim_positions'] = {}
-                            class_aim_positions = {}
-                        for class_str, class_config in class_aim_positions.items():
-                            if isinstance(class_config, dict):
-                                if old_conf_thresh is not None and 'confidence_threshold' not in class_config:
-                                    class_config['confidence_threshold'] = old_conf_thresh
-                                if old_iou_t is not None and 'iou_t' not in class_config:
-                                    class_config['iou_t'] = old_iou_t
-        except Exception as e:
-            print(f'配置迁移失败: {e}')
-            import traceback
-            traceback.print_exc()
+        cfgmgr.migrate_to_class_based(config)
 
     def calculate_max_pixel_distance(self, screen_width, screen_height, fov_angle):
         diagonal_distance = (screen_width ** 2 + screen_height ** 2) ** 0.5
@@ -6352,13 +6177,7 @@ class Valorant:
         return self._get_flashbang()._ultra_fast_move(relative_move_x, relative_move_y, self.config['auto_flashbang'])
 
     def migrate_auto_y_config(self):
-        """迁移auto_y从组级别配置到按键级别配置，确保向后兼容性"""
-        for group_key, group_data in self.config['groups'].items():
-            if 'auto_y' in group_data:
-                group_auto_y = group_data['auto_y']
-                for key_name, key_data in group_data['aim_keys'].items():
-                    if 'auto_y' not in key_data:
-                        key_data['auto_y'] = group_auto_y
+        cfgmgr.migrate_auto_y(self.config)
 
     def is_using_dopa_model(self):
         """\n        检查当前是否使用ZTX模型（包括ZTX的TRT版本）\n        注意：背闪功能只对ZTX模型有效\n        \n        Returns:\n            bool: 如果当前使用ZTX模型返回True，否则返回False\n        """
