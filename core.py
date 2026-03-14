@@ -2237,22 +2237,35 @@ class Valorant:
             class_aim_positions = self.pressed_key_config.get('class_aim_positions', {})
             if not isinstance(class_aim_positions, dict):
                 class_aim_positions = {}
-            min_confidence_threshold = 0.05
-            class_confidence_thresholds = {}
-            class_iou_thresholds = {}
-            for class_str, config in class_aim_positions.items():
-                if isinstance(config, dict):
-                    conf_thresh = config.get('confidence_threshold', 0.5)
-                    iou_thresh = config.get('iou_t', 1.0)
-                    class_confidence_thresholds[int(class_str)] = conf_thresh
-                    class_iou_thresholds[int(class_str)] = iou_thresh
-                    min_confidence_threshold = min(min_confidence_threshold, conf_thresh)
-            if not class_confidence_thresholds:
-                confidence_threshold = self.pressed_key_config.get('confidence_threshold', 0.5)
-                iou_t = self.pressed_key_config.get('iou_t', 1.0)
+            # 缓存逐类阈值，仅在 pressed_key_config 变化时重建
+            _pkc_id = id(self.pressed_key_config)
+            if getattr(self, '_cached_pkc_id', None) != _pkc_id:
+                min_confidence_threshold = 0.05
+                class_confidence_thresholds = {}
+                class_iou_thresholds = {}
+                for class_str, config in class_aim_positions.items():
+                    if isinstance(config, dict):
+                        conf_thresh = config.get('confidence_threshold', 0.5)
+                        iou_thresh = config.get('iou_t', 1.0)
+                        class_confidence_thresholds[int(class_str)] = conf_thresh
+                        class_iou_thresholds[int(class_str)] = iou_thresh
+                        min_confidence_threshold = min(min_confidence_threshold, conf_thresh)
+                if not class_confidence_thresholds:
+                    confidence_threshold = self.pressed_key_config.get('confidence_threshold', 0.5)
+                    iou_t = self.pressed_key_config.get('iou_t', 1.0)
+                else:
+                    confidence_threshold = min_confidence_threshold
+                    iou_t = min(class_iou_thresholds.values()) if class_iou_thresholds else 1.0
+                self._cached_pkc_id = _pkc_id
+                self._cached_class_conf = class_confidence_thresholds
+                self._cached_class_iou = class_iou_thresholds
+                self._cached_conf_thresh = confidence_threshold
+                self._cached_iou_t = iou_t
             else:
-                confidence_threshold = min_confidence_threshold
-                iou_t = min(class_iou_thresholds.values()) if class_iou_thresholds else 1.0
+                class_confidence_thresholds = self._cached_class_conf
+                class_iou_thresholds = self._cached_class_iou
+                confidence_threshold = self._cached_conf_thresh
+                iou_t = self._cached_iou_t
             if is_v8:
                 adaptive_nms_enabled = (
                     self.config['small_target_enhancement']['enabled']
