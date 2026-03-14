@@ -282,6 +282,7 @@ class Valorant:
         self.identify_rect_top = None
         self.identify_rect_left = None
         self.engine = None
+        self._cached_model_area = None
         self.running = False
         self.decrypted_model_data = None
         self.original_model_path = None
@@ -2026,8 +2027,11 @@ class Valorant:
                     aim_bot_scope = 0
                 cx, cy = self.get_current_aim_center()
                 if hasattr(self, 'engine') and self.engine:
-                    _shape = self.engine.get_input_shape()
-                    model_area = _shape[3] * _shape[2]
+                    model_area = self._cached_model_area
+                    if model_area is None:
+                        _shape = self.engine.get_input_shape()
+                        model_area = _shape[3] * _shape[2]
+                        self._cached_model_area = model_area
                 else:
                     model_area = 102400
                 current_key = self.old_pressed_aim_key
@@ -5481,6 +5485,7 @@ class Valorant:
                     else:
                         return None
         self.engine = None
+        self._cached_model_area = None
         if model_path.endswith('.engine') and is_trt and TENSORRT_AVAILABLE:
             try:
                 self.engine = TensorRTInferenceEngine(model_path)
