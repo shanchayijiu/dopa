@@ -1633,6 +1633,9 @@ class Valorant:
             self._crosshair_ema_initialized = False
             self._crosshair_prev_target = None
             self._crosshair_mask_accum = None
+            self._crosshair_mask_accum_count = 0
+            self._crosshair_miss_count = 0
+            self._crosshair_small_mode = False
             return
         h, w = frame.shape[:2]
         roi_w = int(cfg.get('roi_width', 200))
@@ -1678,12 +1681,18 @@ class Valorant:
                                                 np.array([h_max, s_max, v_max], dtype=np.uint8))
             mask = current_mask if mask is None else cv2.bitwise_or(mask, current_mask)
         
-        # 自适应形态学
+        # 自适应形态学（带迟滞，防止阈值附近模式跳变）
         if mask is not None:
             pixel_count = cv2.countNonZero(mask)
             self._last_pixel_count = pixel_count
             small_pixel_thresh = int(cfg.get('small_pixel_threshold', 150))
-            if pixel_count <= small_pixel_thresh:
+            was_small = getattr(self, '_crosshair_small_mode', False)
+            if was_small:
+                is_small_mode = pixel_count <= int(small_pixel_thresh * 1.4)
+            else:
+                is_small_mode = pixel_count <= small_pixel_thresh
+            self._crosshair_small_mode = is_small_mode
+            if is_small_mode:
                 mask = cv2.dilate(mask, self._morph_kernel_dilate_small, iterations=1)
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._morph_kernel_close_small, iterations=1)
                 # 极少像素时用无模糊 HSV 补回被高斯吃掉的边缘（延迟 cvtColor 到需要时）
@@ -1761,7 +1770,9 @@ class Valorant:
         if not contours:
             if should_log:
                 print(f"准星找色: 未找到轮廓 (匹配像素可能太少)")
-            self._decay_crosshair_offset(cfg)
+            self._crosshair_miss_count = getattr(self, '_crosshair_miss_count', 0) + 1
+            if self._crosshair_miss_count >= 3:
+                self._decay_crosshair_offset(cfg)
             return
             
         min_area = float(cfg.get('min_area', 1.0))
@@ -1775,8 +1786,7 @@ class Valorant:
             max_dist_sq = 1.0
         
         # 先收集邻近小轮廓用于合并
-        small_pixel_thresh = int(cfg.get('small_pixel_threshold', 150))
-        is_small_mode = hasattr(self, '_last_pixel_count') and self._last_pixel_count <= small_pixel_thresh
+        is_small_mode = getattr(self, '_crosshair_small_mode', False)
 
         valid_contours = []
         for cnt in contours:
@@ -1826,7 +1836,9 @@ class Valorant:
         if not valid_contours:
             if should_log:
                 print(f"准星找色: 没有符合条件的轮廓")
-            self._decay_crosshair_offset(cfg)
+            self._crosshair_miss_count = getattr(self, '_crosshair_miss_count', 0) + 1
+            if self._crosshair_miss_count >= 3:
+                self._decay_crosshair_offset(cfg)
             return
 
         # 加权评分：距离 60% + 面积倒数 25% + 紧凑度倒数 15%
@@ -1893,6 +1905,7 @@ class Valorant:
 
         self.crosshair_offset = (self._crosshair_ema_x, self._crosshair_ema_y)
         self._crosshair_pull_seq += 1
+        self._crosshair_miss_count = 0
         
         if should_log and (abs(self._crosshair_ema_x) > 1.0 or abs(self._crosshair_ema_y) > 1.0):
              print(f"准星找色: 锁定目标 area={area:.1f}, solidity={best_cnt[5]:.2f}, offset=({self._crosshair_ema_x:.1f}, {self._crosshair_ema_y:.1f})")
