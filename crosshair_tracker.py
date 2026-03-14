@@ -599,12 +599,17 @@ class CrosshairTracker:
                     h_hi -= 180
                 s_lo = max(0, sc - s_tol)
                 s_hi = min(255, sc + s_tol)
-                # 高饱和度时 H+S 已足够区分，自动放宽 V 容差
-                effective_v_tol = v_tol
+                v_lo = max(0, vc - v_tol)
+                v_hi = min(255, vc + v_tol)
                 if sc > 80:
-                    effective_v_tol = max(v_tol, 60)
-                v_lo = max(0, vc - effective_v_tol)
-                v_hi = min(255, vc + effective_v_tol)
+                    # 高饱和度准星：H 是主要区分手段，S/V 自动放宽以
+                    # 捕获抗锯齿和混色的边缘像素（可到中心值的 35%）
+                    auto_s_lo = max(15, int(sc * 0.35))
+                    auto_v_lo = max(15, int(vc * 0.35))
+                    s_lo = min(s_lo, auto_s_lo)
+                    s_hi = 255
+                    v_lo = min(v_lo, auto_v_lo)
+                    v_hi = 255
             else:
                 nr = self.normalize_hsv_range(hr)
                 h_lo, h_hi = nr['h_min'], nr['h_max']
