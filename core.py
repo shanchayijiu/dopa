@@ -2006,9 +2006,9 @@ class Valorant:
             return
         self._crosshair_pull_consumed_seq = seq
         dx, dy = self.crosshair_offset
-        # 缓存回拉参数，避免每次 dict 查找 + try/except
-        pull_params = getattr(self, '_cached_pull_params', None)
-        if pull_params is None or getattr(self, '_cached_pull_cfg_id', None) != id(crosshair_cfg):
+        # 缓存回拉参数，用值签名检测变化（dict id 不变但值会被 GUI 修改）
+        _sig = (crosshair_cfg.get('pull_deadzone'), crosshair_cfg.get('pull_k'), crosshair_cfg.get('pull_max_speed'))
+        if getattr(self, '_cached_pull_sig', None) != _sig:
             try:
                 _deadzone = float(crosshair_cfg.get('pull_deadzone', self.pressed_key_config.get('move_deadzone', 1.0)))
             except Exception:
@@ -2021,10 +2021,9 @@ class Valorant:
                 _max_spd = float(crosshair_cfg.get('pull_max_speed', 6.0))
             except Exception:
                 _max_spd = 6.0
-            pull_params = (_deadzone, _k, _max_spd)
-            self._cached_pull_params = pull_params
-            self._cached_pull_cfg_id = id(crosshair_cfg)
-        pull_deadzone, pull_k, max_speed = pull_params
+            self._cached_pull_params = (_deadzone, _k, _max_spd)
+            self._cached_pull_sig = _sig
+        pull_deadzone, pull_k, max_speed = self._cached_pull_params
         if max_speed <= 0:
             return
         if abs(dx) <= pull_deadzone and abs(dy) <= pull_deadzone:
