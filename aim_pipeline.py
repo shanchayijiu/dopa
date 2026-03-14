@@ -1,4 +1,5 @@
 import math
+from math import sqrt as _sqrt
 import random
 import time
 import threading
@@ -17,9 +18,28 @@ class KalmanPredictor2D:
 
     def __init__(self, process_noise=1.0, measurement_noise=5.0, max_tracks=64):
         self.process_noise = float(process_noise)
-        self.measurement_noise = float(measurement_noise)
+        self._measurement_noise = float(measurement_noise)
         self.max_tracks = int(max_tracks)
         self._tracks = {}  # track_id -> {x, P, last_time}
+        # 预计算常量矩阵，避免每帧重建
+        self._H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=np.float64)
+        self._R = np.array([[self._measurement_noise, 0], [0, self._measurement_noise]], dtype=np.float64)
+        self._I4 = np.eye(4, dtype=np.float64)
+        self._F_template = np.eye(4, dtype=np.float64)
+        self._Q_template = np.zeros((4, 4), dtype=np.float64)
+        self._z_buf = np.empty(2, dtype=np.float64)
+        self._P_init = np.diag([100.0, 100.0, 500.0, 500.0])
+
+    @property
+    def measurement_noise(self):
+        return self._measurement_noise
+
+    @measurement_noise.setter
+    def measurement_noise(self, value):
+        value = float(value)
+        if value != self._measurement_noise:
+            self._measurement_noise = value
+            self._R = np.array([[value, 0], [0, value]], dtype=np.float64)
 
     def reset(self):
         self._tracks.clear()
@@ -27,45 +47,37 @@ class KalmanPredictor2D:
     def _init_state(self, x, y):
         """初始化单个 track 的卡尔曼状态"""
         state = np.array([x, y, 0.0, 0.0], dtype=np.float64)
-        P = np.diag([100.0, 100.0, 500.0, 500.0]).astype(np.float64)
+        P = self._P_init.copy()
         return state, P
 
     def _get_F(self, dt):
-        """状态转移矩阵 (恒速模型)"""
-        return np.array([
-            [1, 0, dt, 0],
-            [0, 1, 0, dt],
-            [0, 0, 1,  0],
-            [0, 0, 0,  1],
-        ], dtype=np.float64)
+        """状态转移矩阵 (恒速模型) — 复用预分配模板"""
+        F = self._F_template.copy()
+        F[0, 2] = dt
+        F[1, 3] = dt
+        return F
 
     def _get_Q(self, dt):
-        """过程噪声矩阵"""
+        """过程噪声矩阵 — 复用预分配模板"""
         q = self.process_noise
         dt2 = dt * dt
         dt3 = dt2 * dt / 2.0
         dt4 = dt2 * dt2 / 4.0
-        return q * np.array([
-            [dt4, 0,   dt3, 0  ],
-            [0,   dt4, 0,   dt3],
-            [dt3, 0,   dt2, 0  ],
-            [0,   dt3, 0,   dt2],
-        ], dtype=np.float64)
+        Q = self._Q_template.copy()
+        Q[0, 0] = dt4; Q[0, 2] = dt3
+        Q[1, 1] = dt4; Q[1, 3] = dt3
+        Q[2, 0] = dt3; Q[2, 2] = dt2
+        Q[3, 1] = dt3; Q[3, 3] = dt2
+        Q *= q
+        return Q
 
     def _get_H(self):
-        """观测矩阵"""
-        return np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-        ], dtype=np.float64)
+        """观测矩阵（预计算）"""
+        return self._H
 
     def _get_R(self):
-        """观测噪声矩阵"""
-        r = self.measurement_noise
-        return np.array([
-            [r, 0],
-            [0, r],
-        ], dtype=np.float64)
+        """观测噪声矩阵（预计算）"""
+        return self._R
 
     def update(self, track_id, mx, my):
         """
@@ -101,9 +113,10 @@ class KalmanPredictor2D:
         P_pred = F @ P @ F.T + Q
 
         # Update
-        H = self._get_H()
-        R = self._get_R()
-        z = np.array([mx, my], dtype=np.float64)
+        H = self._H
+        R = self._R
+        z = self._z_buf
+        z[0] = mx; z[1] = my
         y_res = z - H @ x_pred
         S = H @ P_pred @ H.T + R
         try:
@@ -112,7 +125,7 @@ class KalmanPredictor2D:
             K = np.zeros((4, 2), dtype=np.float64)
 
         x_new = x_pred + K @ y_res
-        P_new = (np.eye(4) - K @ H) @ P_pred
+        P_new = (self._I4 - K @ H) @ P_pred
 
         trk['x'] = x_new
         trk['P'] = P_new
@@ -174,8 +187,8 @@ class AimMoveQuantizer:
         except Exception:
             return dx, dy
 
-        ix = int(math.floor(x)) if x > 0 else int(math.ceil(x))
-        iy = int(math.floor(y)) if y > 0 else int(math.ceil(y))
+        ix = int(x)
+        iy = int(y)
         self._rx = x - ix
         self._ry = y - iy
         return ix, iy
@@ -185,32 +198,32 @@ class AimPointResolver:
     def __init__(self, default_randomize=True):
         self.default_randomize = bool(default_randomize)
 
-    def resolve(self, pressed_key_config, class_id):
-        randomize = pressed_key_config.get('randomize_aim_position', self.default_randomize)
-        randomize = bool(randomize)
+    @staticmethod
+    def _pick(a, b, randomize):
+        try:
+            a = float(a)
+        except Exception:
+            a = 0.5
+        try:
+            b = float(b)
+        except Exception:
+            b = 0.5
+        low = min(a, b)
+        high = max(a, b)
+        if randomize and low != high:
+            return random.uniform(low, high)
+        return (low + high) * 0.5
 
-        def _pick(a, b):
-            try:
-                a = float(a)
-            except Exception:
-                a = 0.5
-            try:
-                b = float(b)
-            except Exception:
-                b = 0.5
-            low = min(a, b)
-            high = max(a, b)
-            if randomize and low != high:
-                return random.uniform(low, high)
-            return (low + high) * 0.5
+    def resolve(self, pressed_key_config, class_id):
+        randomize = bool(pressed_key_config.get('randomize_aim_position', self.default_randomize))
 
         if 'class_aim_positions' not in pressed_key_config:
-            return _pick(pressed_key_config.get('aim_bot_position', 0.5), pressed_key_config.get('aim_bot_position2', 0.5))
+            return self._pick(pressed_key_config.get('aim_bot_position', 0.5), pressed_key_config.get('aim_bot_position2', 0.5), randomize)
         class_str = str(class_id)
         if class_str in pressed_key_config['class_aim_positions']:
             cfg = pressed_key_config['class_aim_positions'][class_str]
-            return _pick(cfg.get('aim_bot_position', 0.5), cfg.get('aim_bot_position2', 0.5))
-        return _pick(pressed_key_config.get('aim_bot_position', 0.5), pressed_key_config.get('aim_bot_position2', 0.5))
+            return self._pick(cfg.get('aim_bot_position', 0.5), cfg.get('aim_bot_position2', 0.5), randomize)
+        return self._pick(pressed_key_config.get('aim_bot_position', 0.5), pressed_key_config.get('aim_bot_position2', 0.5), randomize)
 
 
 class AimPipeline:
@@ -240,6 +253,7 @@ class AimPipeline:
         self._last_output_target_pos = None
         self._aim_position_cache = {}
         self._aim_position_cache_ttl_sec = 2.5
+        self._last_prune_time = 0.0
         self._target_lock_time = 0.0
         # ByteTrack 跟踪器
         self.tracker = ByteTracker(track_thresh=0.5, match_thresh=0.3, track_buffer=30, max_center_dist=80.0)
@@ -305,6 +319,9 @@ class AimPipeline:
 
     def _prune_aim_position_cache(self):
         now = time.time()
+        if now - self._last_prune_time < 1.0:
+            return
+        self._last_prune_time = now
         ttl = float(self._aim_position_cache_ttl_sec)
         for key in list(self._aim_position_cache.keys()):
             item = self._aim_position_cache.get(key)
@@ -327,11 +344,8 @@ class AimPipeline:
         return v
 
     def _reset_pid_integral(self):
-        if hasattr(self.pid, '_i_term') and isinstance(self.pid._i_term, dict):
-            if 'x' in self.pid._i_term:
-                self.pid._i_term['x'] = 0
-            if 'y' in self.pid._i_term:
-                self.pid._i_term['y'] = 0
+        self.pid._i_term['x'] = 0
+        self.pid._i_term['y'] = 0
 
     def _coerce_boxes(self, boxes):
         if boxes is None:
@@ -629,7 +643,7 @@ class AimPipeline:
         for target in targets:
             dx = float(target['pos'][0]) - float(center_x)
             dy = float(target['pos'][1]) - float(center_y)
-            dist = (dx * dx + dy * dy) ** 0.5
+            dist = _sqrt(dx * dx + dy * dy)
             if dist <= aim_scope:
                 target['distance_to_center'] = dist
                 valid_targets.append(target)
@@ -654,7 +668,7 @@ class AimPipeline:
 
         current_total_count = len(valid_targets)
         prev_total_count = int(self.last_target_count)
-        current_ref_count = len([t for t in valid_targets if int(t.get('class_id', 0) or 0) == reference_class])
+        current_ref_count = sum(1 for t in valid_targets if int(t.get('class_id', 0) or 0) == reference_class)
 
         if target_switch_delay > 0 and (not self.is_waiting_for_switch) and (prev_total_count > 1) and (current_total_count < prev_total_count):
             self.is_waiting_for_switch = True
@@ -735,7 +749,7 @@ class AimPipeline:
             for t in valid_targets:
                 dx = float(t['pos'][0]) - float(lx)
                 dy = float(t['pos'][1]) - float(ly)
-                d = (dx * dx + dy * dy) ** 0.5
+                d = _sqrt(dx * dx + dy * dy)
                 if d < best_last_dist:
                     best_last_dist = d
                     sticky_target = t
@@ -778,7 +792,7 @@ class AimPipeline:
             for t in valid_targets:
                 dx = float(t['pos'][0]) - float(lx)
                 dy = float(t['pos'][1]) - float(ly)
-                d = (dx * dx + dy * dy) ** 0.5
+                d = _sqrt(dx * dx + dy * dy)
                 if d < best_d:
                     best_d = d
                     best_t = t
@@ -817,6 +831,8 @@ class AimPipeline:
             det_scores = []
             det_class_ids = []
             det_meta = []  # 保存每个检测的元信息
+            _id_left = float(identify_left)
+            _id_top = float(identify_top)
             for i in range(len(aim_targets)):
                 item = aim_targets[i]
                 result_center_x, result_center_y, width, height = item
@@ -841,14 +857,18 @@ class AimPipeline:
                     size_boost *= large_target_boost
                 final_size_score = relative_size * size_boost
 
-                px = float(identify_left) + float(result_center_x)
-                py = float(identify_top) + (float(result_center_y) - float(height) / 2.0) + max(float(height) * float(aim_position), float(min_position_offset))
+                f_cx = float(result_center_x)
+                f_cy = float(result_center_y)
+                f_w = float(width)
+                f_h = float(height)
+                px = _id_left + f_cx
+                py = _id_top + (f_cy - f_h * 0.5) + max(f_h * float(aim_position), float(min_position_offset))
 
                 # 屏幕坐标系下的检测框
-                sx1 = float(identify_left) + float(result_center_x) - float(width) * 0.5
-                sy1 = float(identify_top) + float(result_center_y) - float(height) * 0.5
-                sx2 = sx1 + float(width)
-                sy2 = sy1 + float(height)
+                sx1 = _id_left + f_cx - f_w * 0.5
+                sy1 = _id_top + f_cy - f_h * 0.5
+                sx2 = sx1 + f_w
+                sy2 = sy1 + f_h
                 det_boxes.append([sx1, sy1, sx2, sy2])
                 det_scores.append(1.0)  # YOLO 后已过滤, 此处统一给 1.0
                 det_class_ids.append(class_id)
@@ -859,17 +879,16 @@ class AimPipeline:
                     'relative_size': relative_size,
                     'class_id': class_id,
                     'aim_position': aim_position,
-                    'box_w': float(width),
-                    'box_h': float(height),
+                    'box_w': f_w,
+                    'box_h': f_h,
                 })
 
             # ---- 通过 ByteTracker 获取稳定 track_id ----
             if self.tracker_enabled and len(det_boxes) > 0:
-                import numpy as _np
                 tracks = self.tracker.update(
-                    _np.array(det_boxes, dtype=_np.float32),
-                    _np.array(det_scores, dtype=_np.float32),
-                    _np.array(det_class_ids, dtype=_np.int32),
+                    np.array(det_boxes, dtype=np.float32),
+                    np.array(det_scores, dtype=np.float32),
+                    np.array(det_class_ids, dtype=np.int32),
                 )
                 # 将 track 与最近的 det_meta 关联（贪心去重）
                 targets = []
@@ -979,7 +998,7 @@ class AimPipeline:
                     self._est_vx = va * comp_dx + (1.0 - va) * self._est_vx
                     self._est_vy = va * comp_dy + (1.0 - va) * self._est_vy
 
-                vel_mag = math.sqrt(self._est_vx ** 2 + self._est_vy ** 2)
+                vel_mag = math.sqrt(self._est_vx * self._est_vx + self._est_vy * self._est_vy)
                 # 死区：低于 0.8 像素/帧 视为静止/抖动
                 if vel_mag > 0.8:
                     factor = float(self.kalman_predict_frames)

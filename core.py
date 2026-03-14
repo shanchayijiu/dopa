@@ -282,6 +282,7 @@ class Valorant:
         self.identify_rect_top = None
         self.identify_rect_left = None
         self.engine = None
+        self._cached_model_area = None
         self.running = False
         self.decrypted_model_data = None
         self.original_model_path = None
@@ -2003,16 +2004,7 @@ class Valorant:
             desired_mode = 'idle'
             
         if desired_mode != self.control_mode:
-            if desired_mode == 'aim':
-                self.aim_pid.reset()
-                if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
-                    self.aim_pipeline.reset()
-                try:
-                    while not self.que_aim.empty():
-                        self.que_aim.get_nowait()
-                except Exception:
-                    pass
-            elif self.control_mode == 'aim':
+            if desired_mode == 'aim' or self.control_mode == 'aim':
                 self.aim_pid.reset()
                 if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
                     self.aim_pipeline.reset()
@@ -2035,9 +2027,11 @@ class Valorant:
                     aim_bot_scope = 0
                 cx, cy = self.get_current_aim_center()
                 if hasattr(self, 'engine') and self.engine:
-                    model_width = self.engine.get_input_shape()[3]
-                    model_height = self.engine.get_input_shape()[2]
-                    model_area = model_width * model_height
+                    model_area = self._cached_model_area
+                    if model_area is None:
+                        _shape = self.engine.get_input_shape()
+                        model_area = _shape[3] * _shape[2]
+                        self._cached_model_area = model_area
                 else:
                     model_area = 102400
                 current_key = self.old_pressed_aim_key
@@ -2081,31 +2075,21 @@ class Valorant:
         return (ix, iy)
 
     def _execute_move_async(self, relative_move_x, relative_move_y):
-        if self.config['is_curve']:
-            curve = HumanCurve((0, 0), (round(relative_move_x), round(relative_move_y)), offsetBoundaryX=self.config['offset_boundary_x'], offsetBoundaryY=self.config['offset_boundary_y'], knotsCount=self.config['knots_count'], distortionMean=self.config['distortion_mean'], distortionStdev=self.config['distortion_st_dev'], distortionFrequency=self.config['distortion_frequency'], targetPoints=self.config['target_points'])
+        cfg = self.config
+        if cfg['is_curve'] or (cfg['is_curve_uniform'] and self.AimController.is_uniform_motion(cfg['show_motion_speed'])):
+            skip_zero = cfg['is_curve']  # is_curve 跳过零移动, is_curve_uniform 不跳过
+            curve = HumanCurve((0, 0), (round(relative_move_x), round(relative_move_y)), offsetBoundaryX=cfg['offset_boundary_x'], offsetBoundaryY=cfg['offset_boundary_y'], knotsCount=cfg['knots_count'], distortionMean=cfg['distortion_mean'], distortionStdev=cfg['distortion_st_dev'], distortionFrequency=cfg['distortion_frequency'], targetPoints=cfg['target_points'])
             curve = curve.points
             if isinstance(curve, tuple):
                 self._emit_move_rel(relative_move_x, relative_move_y)
             else:
-                if self.config['is_show_curve']:
+                if cfg['is_show_curve']:
                     print(f'曲线点数: {len(curve)}')
                 for i in range(1, len(curve)):
                     x = round(curve[i][0] - curve[i - 1][0])
                     y = round(curve[i][1] - curve[i - 1][1])
-                    if x == 0 and y == 0:
+                    if skip_zero and x == 0 and y == 0:
                         continue
-                    self._emit_move_rel(x, y)
-        elif self.config['is_curve_uniform'] and self.AimController.is_uniform_motion(self.config['show_motion_speed']):
-            curve = HumanCurve((0, 0), (round(relative_move_x), round(relative_move_y)), offsetBoundaryX=self.config['offset_boundary_x'], offsetBoundaryY=self.config['offset_boundary_y'], knotsCount=self.config['knots_count'], distortionMean=self.config['distortion_mean'], distortionStdev=self.config['distortion_st_dev'], distortionFrequency=self.config['distortion_frequency'], targetPoints=self.config['target_points'])
-            curve = curve.points
-            if isinstance(curve, tuple):
-                self._emit_move_rel(relative_move_x, relative_move_y)
-            else:
-                if self.config['is_show_curve']:
-                    print(f'曲线点数: {len(curve)}')
-                for i in range(1, len(curve)):
-                    x = round(curve[i][0] - curve[i - 1][0])
-                    y = round(curve[i][1] - curve[i - 1][1])
                     self._emit_move_rel(x, y)
         else:
             self._emit_move_rel(relative_move_x, relative_move_y)
@@ -2120,12 +2104,11 @@ class Valorant:
         if boxes.ndim != 2 or boxes.shape[1] < 4 or len(boxes) == 0:
             return boxes
 
-        fixed = np.nan_to_num(boxes[:, :4].copy(), nan=0.0, posinf=0.0, neginf=0.0)
+        fixed = np.nan_to_num(boxes[:, :4], nan=0.0, posinf=0.0, neginf=0.0)
 
         # 判断是否更像 xyxy（大部分框满足 x2>x1, y2>y1）
         xyxy_mask = (fixed[:, 2] > fixed[:, 0]) & (fixed[:, 3] > fixed[:, 1])
-        xyxy_ratio = float(np.mean(xyxy_mask)) if len(fixed) > 0 else 0.0
-        if xyxy_ratio > 0.8:
+        if xyxy_mask.sum() > len(fixed) * 0.8:
             x1, y1, x2, y2 = fixed[:, 0], fixed[:, 1], fixed[:, 2], fixed[:, 3]
             w = np.maximum(1e-6, x2 - x1)
             h = np.maximum(1e-6, y2 - y1)
@@ -2148,7 +2131,6 @@ class Valorant:
         return fixed
 
     def infer(self):
-        import numpy as np
         self.time_begin_period(1)
         if self.engine is None:
             model_path = self.config['groups'][self.group]['infer_model']
@@ -2188,9 +2170,7 @@ class Valorant:
                 frame_skip_counter += 1
                 if frame_skip_counter % (frame_skip_ratio + 1)!= 0:
                     continue
-            t0 = time.perf_counter()
             screenshot = self.screenshot_manager.get_screenshot(screenshot_region)
-            cap_ms = (time.perf_counter() - t0) * 1000
             if screenshot is None:
                 continue
             self.update_crosshair_tracking(screenshot)
@@ -2206,9 +2186,7 @@ class Valorant:
                 frame_count = 0
                 start_time = current_fps_time
                 last_fps_update_time = current_fps_time
-            t1 = time.perf_counter()
             img_input = read_img(screenshot, (input_shape_weight, input_shape_height))
-            pre_ms = (time.perf_counter() - t1) * 1000
             infer_start_time = time.perf_counter()
             try:
                 outputs = self.engine.infer(img_input)
@@ -2259,23 +2237,35 @@ class Valorant:
             class_aim_positions = self.pressed_key_config.get('class_aim_positions', {})
             if not isinstance(class_aim_positions, dict):
                 class_aim_positions = {}
-            min_confidence_threshold = 0.05
-            class_confidence_thresholds = {}
-            class_iou_thresholds = {}
-            for class_str, config in class_aim_positions.items():
-                if isinstance(config, dict):
-                    conf_thresh = config.get('confidence_threshold', 0.5)
-                    iou_thresh = config.get('iou_t', 1.0)
-                    class_confidence_thresholds[int(class_str)] = conf_thresh
-                    class_iou_thresholds[int(class_str)] = iou_thresh
-                    min_confidence_threshold = min(min_confidence_threshold, conf_thresh)
-            if not class_confidence_thresholds:
-                confidence_threshold = self.pressed_key_config.get('confidence_threshold', 0.5)
-                iou_t = self.pressed_key_config.get('iou_t', 1.0)
+            # 缓存逐类阈值，仅在 pressed_key_config 变化时重建
+            _pkc_id = id(self.pressed_key_config)
+            if getattr(self, '_cached_pkc_id', None) != _pkc_id:
+                min_confidence_threshold = 0.05
+                class_confidence_thresholds = {}
+                class_iou_thresholds = {}
+                for class_str, config in class_aim_positions.items():
+                    if isinstance(config, dict):
+                        conf_thresh = config.get('confidence_threshold', 0.5)
+                        iou_thresh = config.get('iou_t', 1.0)
+                        class_confidence_thresholds[int(class_str)] = conf_thresh
+                        class_iou_thresholds[int(class_str)] = iou_thresh
+                        min_confidence_threshold = min(min_confidence_threshold, conf_thresh)
+                if not class_confidence_thresholds:
+                    confidence_threshold = self.pressed_key_config.get('confidence_threshold', 0.5)
+                    iou_t = self.pressed_key_config.get('iou_t', 1.0)
+                else:
+                    confidence_threshold = min_confidence_threshold
+                    iou_t = min(class_iou_thresholds.values()) if class_iou_thresholds else 1.0
+                self._cached_pkc_id = _pkc_id
+                self._cached_class_conf = class_confidence_thresholds
+                self._cached_class_iou = class_iou_thresholds
+                self._cached_conf_thresh = confidence_threshold
+                self._cached_iou_t = iou_t
             else:
-                confidence_threshold = min_confidence_threshold
-                iou_t = min(class_iou_thresholds.values()) if class_iou_thresholds else 1.0
-            t3 = time.perf_counter()
+                class_confidence_thresholds = self._cached_class_conf
+                class_iou_thresholds = self._cached_class_iou
+                confidence_threshold = self._cached_conf_thresh
+                iou_t = self._cached_iou_t
             if is_v8:
                 adaptive_nms_enabled = (
                     self.config['small_target_enhancement']['enabled']
@@ -2293,7 +2283,6 @@ class Valorant:
                     input_w=input_shape_weight,
                     input_h=input_shape_height,
                 )
-            post_ms = (time.perf_counter() - t3) * 1000
             
             current_selected_classes = self.pressed_key_config.get('classes', [])
             selected_classes_set = set(current_selected_classes) if current_selected_classes else set()
@@ -2307,7 +2296,8 @@ class Valorant:
                 else:
                     all_class_ids = np.argmax(classes, axis=1).astype(int)
                 if selected_classes_set:
-                    mask = np.array([cls_id in selected_classes_set for cls_id in all_class_ids], dtype=bool)
+                    _selected_arr = np.array(list(selected_classes_set), dtype=int)
+                    mask = np.isin(all_class_ids, _selected_arr)
                     boxes = boxes[mask]
                     scores = scores[mask]
                     classes = classes[mask]
@@ -2315,12 +2305,11 @@ class Valorant:
                         aim_boxes = aim_boxes[mask]
                     class_ids = all_class_ids[mask].tolist()
                     if class_confidence_thresholds and len(boxes) > 0:
-                        confidence_mask = []
-                        for i, cls_id in enumerate(class_ids):
-                            cls_conf_thresh = class_confidence_thresholds.get(cls_id, 0.5)
-                            confidence_mask.append(scores[i] >= cls_conf_thresh)
-                        if confidence_mask:
-                            confidence_mask = np.array(confidence_mask, dtype=bool)
+                        # 向量化逐类置信度过滤
+                        _default_conf = 0.5
+                        _thresholds = np.array([class_confidence_thresholds.get(c, _default_conf) for c in class_ids], dtype=np.float32)
+                        confidence_mask = scores >= _thresholds
+                        if not confidence_mask.all():
                             boxes = boxes[confidence_mask]
                             scores = scores[confidence_mask]
                             classes = classes[confidence_mask]
@@ -5509,6 +5498,7 @@ class Valorant:
                     else:
                         return None
         self.engine = None
+        self._cached_model_area = None
         if model_path.endswith('.engine') and is_trt and TENSORRT_AVAILABLE:
             try:
                 self.engine = TensorRTInferenceEngine(model_path)

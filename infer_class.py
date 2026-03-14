@@ -25,7 +25,6 @@ class NMSProcessor:
     """
 
     def __init__(self):
-        self._nms_cache = {}
         self._performance_stats = {}
         self._algorithm_preference = None
 
@@ -47,9 +46,6 @@ class NMSProcessor:
         start_time = time.perf_counter()
         if algorithm == 'auto':
             algorithm = self._select_optimal_algorithm(pred, class_num)
-        cache_key = self._generate_cache_key(pred, conf_thres, iou_thres, algorithm)
-        if cache_key in self._nms_cache:
-            return self._nms_cache[cache_key]
         try:
             if algorithm == 'v8':
                 boxes, scores, classes = nms_v8(pred, conf_thres, iou_thres)
@@ -65,8 +61,6 @@ class NMSProcessor:
                 raise ValueError(f'Unsupported NMS algorithm: {algorithm}')
             processing_time = time.perf_counter() - start_time
             self._update_performance_stats(algorithm, processing_time, len(boxes) if len(boxes) > 0 else 0)
-            if len(self._nms_cache) < 100:
-                self._nms_cache[cache_key] = (boxes, scores, classes)
             return (boxes, scores, classes)
         except Exception as e:
             print(f'[NMS] Algorithm {algorithm} failed: {e}, falling back to v8')
@@ -87,11 +81,6 @@ class NMSProcessor:
             return best_algo
         return 'v8'
 
-    def _generate_cache_key(self, pred: np.ndarray, conf_thres: float, iou_thres: float, algorithm: str) -> str:
-        """生成缓存键"""
-        pred_hash = hash(pred.tobytes()) if hasattr(pred, 'tobytes') else hash(str(pred))
-        return f'{algorithm}_{conf_thres}_{iou_thres}_{pred_hash}'
-
     def _update_performance_stats(self, algorithm: str, processing_time: float, result_count: int):
         """更新性能统计"""
         if algorithm not in self._performance_stats:
@@ -103,13 +92,13 @@ class NMSProcessor:
         stats['avg_time'] = stats['total_time'] / stats['call_count']
         stats['total_results'] += result_count
 
-    def clear_cache(self):
-        """清除缓存"""
-        self._nms_cache.clear()
-
     def get_performance_stats(self) -> dict:
         """获取性能统计信息"""
         return self._performance_stats.copy()
+
+    def clear_cache(self):
+        """No-op — 帧间缓存已移除（每帧预测数据不同，缓存命中率≈0）"""
+        pass
 
 
 class OnnxRuntimeDmlEngine:

@@ -7,9 +7,10 @@ ByteTrack 轻量级多目标跟踪器
 依赖: scipy.optimize.linear_sum_assignment (匈牙利算法)
 """
 
-import time
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+
+_ZERO_VEL = np.zeros(2, dtype=np.float32)
 
 
 class STrack:
@@ -40,8 +41,9 @@ class STrack:
         self.start_frame = 0
         self.tracklet_len = 0
         # EMA 平滑速度估计 (像素/帧)
-        self._velocity = np.zeros(2, dtype=np.float32)
+        self._velocity = _ZERO_VEL  # 被 update/re_activate 时替换为新数组
         self._vel_alpha = 0.15  # EMA 平滑系数，越小越平滑
+        self._center_cache = None  # 缓存 center 计算结果
 
     @staticmethod
     def reset_id():
@@ -55,33 +57,26 @@ class STrack:
 
     @property
     def center(self):
-        return np.array([
-            (self.bbox[0] + self.bbox[2]) * 0.5,
-            (self.bbox[1] + self.bbox[3]) * 0.5,
-        ], dtype=np.float32)
-
-    @property
-    def wh(self):
-        return np.array([
-            self.bbox[2] - self.bbox[0],
-            self.bbox[3] - self.bbox[1],
-        ], dtype=np.float32)
+        if self._center_cache is None:
+            self._center_cache = np.array([
+                (self.bbox[0] + self.bbox[2]) * 0.5,
+                (self.bbox[1] + self.bbox[3]) * 0.5,
+            ], dtype=np.float32)
+        return self._center_cache
 
     @property
     def velocity(self):
         """返回 (vx, vy) 像素/帧"""
-        return self._velocity.copy()
+        return self._velocity
 
     def predict(self):
-        """用匀速模型预测下一帧位置"""
-        cx, cy = self.center
-        w, h = self.wh
-        cx += self._velocity[0]
-        cy += self._velocity[1]
-        self.bbox = np.array([
-            cx - w * 0.5, cy - h * 0.5,
-            cx + w * 0.5, cy + h * 0.5,
-        ], dtype=np.float32)
+        """用匀速模型预测下一帧位置（原地平移 bbox）"""
+        vx, vy = self._velocity[0], self._velocity[1]
+        self.bbox[0] += vx
+        self.bbox[1] += vy
+        self.bbox[2] += vx
+        self.bbox[3] += vy
+        self._center_cache = None
 
     def activate(self, frame_id):
         """激活新轨迹"""
@@ -95,7 +90,8 @@ class STrack:
     def re_activate(self, new_det, frame_id):
         """重新激活丢失的轨迹"""
         old_center = self.center.copy()
-        self.bbox = np.array(new_det.bbox, dtype=np.float32)
+        self.bbox = new_det.bbox  # 直接引用检测 bbox（检测对象不再使用）
+        self._center_cache = None
         self.score = new_det.score
         self.class_id = new_det.class_id
         new_center = self.center
@@ -109,7 +105,8 @@ class STrack:
     def update(self, new_det, frame_id):
         """用新检测更新轨迹"""
         old_center = self.center.copy()
-        self.bbox = np.array(new_det.bbox, dtype=np.float32)
+        self.bbox = new_det.bbox  # 直接引用检测 bbox（检测对象不再使用）
+        self._center_cache = None
         self.score = new_det.score
         self.class_id = new_det.class_id
         new_center = self.center
@@ -160,8 +157,7 @@ def _iou_batch(bboxes_a, bboxes_b):
     area_b = (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])
 
     union = area_a[:, None] + area_b[None, :] - inter_area
-    iou = np.where(union > 0, inter_area / union, 0.0)
-    return iou.astype(np.float32)
+    return np.where(union > 0, inter_area / union, 0.0)
 
 
 def _linear_assignment(cost_matrix, thresh):
@@ -183,16 +179,17 @@ def _linear_assignment(cost_matrix, thresh):
     row_indices, col_indices = linear_sum_assignment(cost_matrix)
 
     matches = []
-    unmatched_rows = list(range(cost_matrix.shape[0]))
-    unmatched_cols = list(range(cost_matrix.shape[1]))
+    matched_rows = set()
+    matched_cols = set()
 
     for r, c in zip(row_indices, col_indices):
         if cost_matrix[r, c] <= thresh:
             matches.append((r, c))
-            if r in unmatched_rows:
-                unmatched_rows.remove(r)
-            if c in unmatched_cols:
-                unmatched_cols.remove(c)
+            matched_rows.add(r)
+            matched_cols.add(c)
+
+    unmatched_rows = [i for i in range(cost_matrix.shape[0]) if i not in matched_rows]
+    unmatched_cols = [j for j in range(cost_matrix.shape[1]) if j not in matched_cols]
 
     return matches, unmatched_rows, unmatched_cols
 
@@ -216,7 +213,6 @@ class ByteTracker:
         self.frame_id = 0
         self.tracked_stracks = []   # 当前跟踪中
         self.lost_stracks = []      # 暂时丢失
-        self.removed_stracks = []   # 已删除
         STrack.reset_id()
 
     def reset(self):
@@ -224,7 +220,6 @@ class ByteTracker:
         self.frame_id = 0
         self.tracked_stracks.clear()
         self.lost_stracks.clear()
-        self.removed_stracks.clear()
         STrack.reset_id()
 
     def update(self, boxes, scores=None, class_ids=None):
@@ -250,16 +245,16 @@ class ByteTracker:
             self._remove_expired_lost()
             return self._output_stracks()
 
-        boxes = np.array(boxes, dtype=np.float32)
+        boxes = np.asarray(boxes, dtype=np.float32)
         n = len(boxes)
         if scores is None:
             scores = np.ones(n, dtype=np.float32)
         else:
-            scores = np.array(scores, dtype=np.float32)
+            scores = np.asarray(scores, dtype=np.float32)
         if class_ids is None:
             class_ids = np.zeros(n, dtype=np.int32)
         else:
-            class_ids = np.array(class_ids, dtype=np.int32)
+            class_ids = np.asarray(class_ids, dtype=np.int32)
 
         # 创建检测对象
         detections = []
@@ -331,7 +326,7 @@ class ByteTracker:
                 tc = np.array([t.center for t in remaining_tracked], dtype=np.float32)
                 dc = np.array([d.center for d in remaining_high], dtype=np.float32)
                 diff = tc[:, None, :] - dc[None, :, :]
-                dist_mat = np.sqrt(np.sum(diff ** 2, axis=2))
+                dist_mat = np.sqrt(np.sum(diff * diff, axis=2))
                 matches_2b, u_tracks_2b, u_dets_2b = _linear_assignment(dist_mat, self.max_center_dist)
                 matched_det_set = set()
                 for t_idx, d_idx in matches_2b:
@@ -365,7 +360,7 @@ class ByteTracker:
             track_centers = np.array([t.center for t in unmatched_lost], dtype=np.float32)
             det_centers = np.array([d.center for d in remaining_high_dets], dtype=np.float32)
             diff = track_centers[:, None, :] - det_centers[None, :, :]
-            dist_matrix = np.sqrt(np.sum(diff ** 2, axis=2))
+            dist_matrix = np.sqrt(np.sum(diff * diff, axis=2))
             matches_3, _, u_dets_3 = _linear_assignment(dist_matrix, self.max_center_dist)
             matched_det_indices = set()
             for t_idx, d_idx in matches_3:
@@ -404,7 +399,6 @@ class ByteTracker:
                 remaining.append(t)
             else:
                 t.mark_removed()
-                self.removed_stracks.append(t)
         self.lost_stracks = remaining
 
     def _output_stracks(self):

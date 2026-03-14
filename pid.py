@@ -1,6 +1,5 @@
 import time
-import math
-from collections import deque
+from math import sqrt as _sqrt
 
 
 class PID:
@@ -98,15 +97,7 @@ class DualAxisPID:
         self.smooth_y = smooth_params[1]
         self.smooth_deadzone = smooth_params[2]
         self.smooth_algorithm = smooth_params[3] if len(smooth_params) > 3 else 1.0
-        self._smooth_history_x = []
-        self._smooth_history_y = []
-        self.history_size = 20
-        self.error_history = deque(maxlen=self.history_size)
-        self.time_history = deque(maxlen=self.history_size)
-        self.uniform_threshold = 1.5
-        self.min_velocity_threshold = 10.0
-        self.max_velocity_threshold = 100.0
-        self.compensation_factor = 2.0
+        self._tau_x, self._tau_y = self._calc_tau(self.smooth_x, self.smooth_y)
         # ---- 误差滤波 ----
         # 对PID输入误差做EMA平滑，过滤检测框帧间抖动
         self.error_filter_alpha = 0.0    # 0=不滤波(直通), 越大越平滑(0~0.95)
@@ -130,10 +121,6 @@ class DualAxisPID:
         self._i_min = {'x': -self.windup_guard['x'], 'y': -self.windup_guard['y']}
         self._last_integral_increment = {'x': 0, 'y': 0}
         self._last_output = {'x': 0.0, 'y': 0.0}  # Added for smoothing
-        self._smooth_history_x = []
-        self._smooth_history_y = []
-        self.error_history = deque(maxlen=self.history_size)
-        self.time_history = deque(maxlen=self.history_size)
         self._filtered_error = {'x': 0.0, 'y': 0.0}
         self._error_filter_initialized = False
         self._filtered_vel = {'x': 0.0, 'y': 0.0}
@@ -166,23 +153,32 @@ class DualAxisPID:
             self._d_term[axis] = 0
         return self._p_term[axis] + self._i_term[axis] + self._d_term[axis]
 
+    @staticmethod
+    def _calc_tau(smooth_x, smooth_y):
+        try:
+            tx = float(smooth_x) / 1000.0
+        except (ValueError, TypeError):
+            tx = 0.0
+        try:
+            ty = float(smooth_y) / 1000.0
+        except (ValueError, TypeError):
+            ty = 0.0
+        return tx, ty
+
     def _apply_smoothing(self, x_output, y_output, error_x, error_y, delta_time):
         """
         应用指数平滑算法
         平滑参数 (smooth_x/y) 被解释为时间常数 (毫秒)
         alpha = dt / (dt + tau)
         """
-        error_distance = (error_x ** 2 + error_y ** 2) ** 0.5
+        error_distance = _sqrt(error_x * error_x + error_y * error_y)
         if error_distance <= self.smooth_deadzone:
             self._last_output['x'] = x_output
             self._last_output['y'] = y_output
             return (x_output, y_output)
 
-        try:
-            tau_x = float(self.smooth_x) / 1000.0  # ms to seconds
-            tau_y = float(self.smooth_y) / 1000.0
-        except (ValueError, TypeError):
-            tau_x, tau_y = 0.0, 0.0
+        tau_x = self._tau_x
+        tau_y = self._tau_y
 
         if delta_time <= 0.000001:
             alpha_x, alpha_y = 1.0, 1.0
@@ -201,6 +197,42 @@ class DualAxisPID:
         self._last_output['y'] = final_y
         
         return (final_x, final_y)
+
+    def _apply_limits_and_anti_windup(self, axis, unsat_value):
+        value = unsat_value
+        saturated = False
+        limits = self.output_limits.get(axis)
+        if limits is not None:
+            min_out, max_out = limits
+            if value > max_out:
+                value = max_out
+                saturated = True
+            elif value < min_out:
+                value = min_out
+                saturated = True
+        if saturated:
+            if self.anti_windup_mode == 'backcalc':
+                self._i_term[axis] += self.backcalc_gain[axis] * (value - unsat_value)
+            else:
+                self._i_term[axis] -= self._last_integral_increment[axis]
+            if self.windup_guard[axis] > 0:
+                if self._i_term[axis] > self._i_max[axis]:
+                    self._i_term[axis] = self._i_max[axis]
+                    return value
+                if self._i_term[axis] < self._i_min[axis]:
+                    self._i_term[axis] = self._i_min[axis]
+        return value
+
+    @staticmethod
+    def _final_clamp(limits, value):
+        if limits is None:
+            return value
+        min_out, max_out = limits
+        if value > max_out:
+            return max_out
+        if value < min_out:
+            return min_out
+        return value
 
     def compute(self, error_x, error_y):
         """
@@ -230,53 +262,17 @@ class DualAxisPID:
         x_output_unsat = self._calculate_output('x', error_x, delta_time)
         y_output_unsat = self._calculate_output('y', error_y, delta_time)
 
-        def _apply_limits_and_anti_windup(axis, unsat_value):
-            value = unsat_value
-            saturated = False
-            limits = self.output_limits.get(axis)
-            if limits is not None:
-                min_out, max_out = limits
-                if value > max_out:
-                    value = max_out
-                    saturated = True
-                elif value < min_out:
-                    value = min_out
-                    saturated = True
-            if saturated:
-                if self.anti_windup_mode == 'backcalc':
-                    self._i_term[axis] += self.backcalc_gain[axis] * (value - unsat_value)
-                else:
-                    self._i_term[axis] -= self._last_integral_increment[axis]
-                if self.windup_guard[axis] > 0:
-                    if self._i_term[axis] > self._i_max[axis]:
-                        self._i_term[axis] = self._i_max[axis]
-                        return value
-                    if self._i_term[axis] < self._i_min[axis]:
-                        self._i_term[axis] = self._i_min[axis]
-            return value
-
-        x_output = _apply_limits_and_anti_windup('x', x_output_unsat)
-        y_output = _apply_limits_and_anti_windup('y', y_output_unsat)
+        x_output = self._apply_limits_and_anti_windup('x', x_output_unsat)
+        y_output = self._apply_limits_and_anti_windup('y', y_output_unsat)
         x_output, y_output = self._apply_smoothing(x_output, y_output, error_x, error_y, delta_time)
-        error_magnitude = (error_x ** 2 + error_y ** 2) ** 0.5
+        error_magnitude = _sqrt(error_x * error_x + error_y * error_y)
         if error_magnitude < 5.0:
             deadzone_factor = max(0.1, error_magnitude / 5.0)
             x_output *= deadzone_factor
             y_output *= deadzone_factor
 
-        def _final_clamp(axis, value):
-            limits = self.output_limits.get(axis)
-            if limits is None:
-                return value
-            min_out, max_out = limits
-            if value > max_out:
-                return max_out
-            if value < min_out:
-                return min_out
-            return value
-
-        x_output = _final_clamp('x', x_output)
-        y_output = _final_clamp('y', y_output)
+        x_output = self._final_clamp(self.output_limits.get('x'), x_output)
+        y_output = self._final_clamp(self.output_limits.get('y'), y_output)
         # ---- 速度滤波：EMA平滑输出，减少移动抖动 ----
         vf_alpha = max(0.0, min(0.95, self.vel_filter_alpha))
         if vf_alpha > 0.001:
@@ -350,6 +346,8 @@ class DualAxisPID:
             self.smooth_x = smooth_x
         if smooth_y is not None:
             self.smooth_y = smooth_y
+        if smooth_x is not None or smooth_y is not None:
+            self._tau_x, self._tau_y = self._calc_tau(self.smooth_x, self.smooth_y)
         if smooth_deadzone is not None:
             self.smooth_deadzone = smooth_deadzone
         if smooth_algorithm is not None:
