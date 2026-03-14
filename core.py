@@ -1842,16 +1842,17 @@ class Valorant:
             else:
                 cX = bx + bw / 2.0
                 cY = by + bh / 2.0
-            
-            # 计算轮廓紧凑度（凸包面积比），过滤松散噪点
-            solidity = 0.0
-            hull = cv2.convexHull(cnt)
-            hull_area = cv2.contourArea(hull)
-            if hull_area > 0:
-                solidity = area / hull_area
 
             dist_sq = (cX - roi_cx) ** 2 + (cY - roi_cy) ** 2
-            valid_contours.append((cnt, dist_sq, area, (bx, by, bw, bh), (cX, cY), solidity))
+            valid_contours.append((cnt, dist_sq, area, (bx, by, bw, bh), (cX, cY), 0.0))
+
+        # 仅多轮廓时计算 convexHull solidity（单轮廓无需比较）
+        if len(valid_contours) > 1:
+            for idx, (cnt, dist_sq, area, rect, center, _) in enumerate(valid_contours):
+                hull = cv2.convexHull(cnt)
+                hull_area = cv2.contourArea(hull)
+                solidity = area / hull_area if hull_area > 0 else 0.0
+                valid_contours[idx] = (cnt, dist_sq, area, rect, center, solidity)
 
         # 小目标模式下合并邻近轮廓：如果多个小轮廓中心距离很近，合为一个
         if is_small_mode and len(valid_contours) > 1:
