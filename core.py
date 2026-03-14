@@ -18,6 +18,7 @@ import cv2
 import dearpygui.dearpygui as dpg
 import kmNet
 import numpy as np
+from crosshair_tracker import CrosshairTracker
 import pydirectinput
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
@@ -370,30 +371,12 @@ class Valorant:
         self.crosshair_preview_width = int(crosshair_cfg.get('preview_width', 320))
         self.crosshair_preview_height = int(crosshair_cfg.get('preview_height', 320))
         self.crosshair_preview_texture_tag = 'crosshair_preview_texture'
-        self.crosshair_offset = (0.0, 0.0)
-        self.crosshair_lock_box = None
+        # 准星追踪器（独立模块）
+        self._crosshair_tracker = CrosshairTracker()
         self.crosshair_pick_mode = False
         self.crosshair_use_pending = False
         self.crosshair_pending_hsv = None
         self.crosshair_pending_rgb = None
-        self.last_crosshair_frame = None
-        # 缓存形态学核，避免每帧重建
-        self._morph_kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        self._morph_kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        self._morph_kernel_dilate_small = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        self._morph_kernel_close_small = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        # EMA 时间平滑状态
-        self._crosshair_ema_x = 0.0
-        self._crosshair_ema_y = 0.0
-        self._crosshair_ema_initialized = False
-        # 目标粘滞：上一帧选中目标中心（ROI 坐标系）
-        self._crosshair_prev_target = None
-        # 防止 1ms 定时器对同一帧偏移量重复回拉
-        self._crosshair_pull_seq = 0
-        self._crosshair_pull_consumed_seq = -1
-        # 多帧 mask 累积，增强小目标时间连续性
-        self._crosshair_mask_accum = None
-        self._crosshair_mask_accum_count = 0
         self.crosshair_color_group_combo = None
         self.crosshair_delete_color_button = None
         self.crosshair_h_min_slider = None
@@ -1620,427 +1603,21 @@ class Valorant:
     def get_current_aim_center(self):
         cfg = self.config.get('crosshair_color_lock', {})
         if isinstance(cfg, dict) and cfg.get('enabled'):
-            dx, dy = self.crosshair_offset
+            dx, dy = self._crosshair_tracker.offset
             return (self.screen_center_x + dx, self.screen_center_y + dy)
         return (self.screen_center_x, self.screen_center_y)
 
     def update_crosshair_tracking(self, frame):
-        self.last_crosshair_frame = frame
+        """委托给 CrosshairTracker"""
         cfg = self._get_crosshair_lock_config()
-        if not cfg.get('enabled'):
-            self.crosshair_offset = (0.0, 0.0)
-            self.crosshair_lock_box = None
-            self._crosshair_ema_initialized = False
-            self._crosshair_prev_target = None
-            self._crosshair_mask_accum = None
-            self._crosshair_mask_accum_count = 0
-            self._crosshair_miss_count = 0
-            self._crosshair_small_mode = False
-            return
-        h, w = frame.shape[:2]
-        roi_w = int(cfg.get('roi_width', 200))
-        roi_h = int(cfg.get('roi_height', 200))
-        roi_w = max(1, min(roi_w, w))
-        roi_h = max(1, min(roi_h, h))
-        center_x, center_y = w // 2, h // 2
-        x1 = max(0, center_x - roi_w // 2)
-        y1 = max(0, center_y - roi_h // 2)
-        x2 = min(w, x1 + roi_w)
-        y2 = min(h, y1 + roi_h)
-        roi = frame[y1:y2, x1:x2]
-
-        # 极小 ROI 时跳过高斯模糊，避免准星边缘被吃掉
-        _blur_skipped = roi_w <= 30 or roi_h <= 30
-        if _blur_skipped:
-            hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        else:
-            roi_blur = cv2.GaussianBlur(roi, (3, 3), 0)
-            hsv = cv2.cvtColor(roi_blur, cv2.COLOR_BGR2HSV)
-
-        hsv_ranges = cfg.get('hsv_ranges', [])
-        mask = None
-        
-        show_active_only = cfg.get('show_active_only', False)
-        active_index = int(cfg.get('active_index', 0))
-
-        # 缓存 HSV 范围的 normalize 结果和 np.array 边界，仅配置变化时重建
-        _ranges_sig = tuple(
-            (r.get('h_min'), r.get('h_max'), r.get('s_min'), r.get('s_max'), r.get('v_min'), r.get('v_max'))
-            for r in hsv_ranges if isinstance(r, dict)
-        )
-        _cache_key = (_ranges_sig, show_active_only, active_index)
-        if getattr(self, '_hsv_bounds_cache_key', None) != _cache_key:
-            bounds = []
-            for i, hsv_range in enumerate(hsv_ranges):
-                if show_active_only and i != active_index:
-                    bounds.append(None)
-                    continue
-                nr = self._normalize_hsv_range(hsv_range)
-                h_min, h_max = nr['h_min'], nr['h_max']
-                s_min, s_max = nr['s_min'], nr['s_max']
-                v_min, v_max = nr['v_min'], nr['v_max']
-                if h_min > h_max:
-                    bounds.append((
-                        nr,
-                        np.array([h_min, s_min, v_min], dtype=np.uint8),
-                        np.array([179, s_max, v_max], dtype=np.uint8),
-                        np.array([0, s_min, v_min], dtype=np.uint8),
-                        np.array([h_max, s_max, v_max], dtype=np.uint8),
-                    ))
-                else:
-                    bounds.append((
-                        nr,
-                        np.array([h_min, s_min, v_min], dtype=np.uint8),
-                        np.array([h_max, s_max, v_max], dtype=np.uint8),
-                        None, None,
-                    ))
-            self._hsv_bounds_cache = bounds
-            self._hsv_bounds_cache_key = _cache_key
-        cached_bounds = self._hsv_bounds_cache
-
-        normalized_ranges = []
-        for entry in cached_bounds:
-            if entry is None:
-                normalized_ranges.append(None)
-                continue
-            nr, lo1, hi1, lo2, hi2 = entry
-            normalized_ranges.append(nr)
-            if lo2 is not None:
-                mask1 = cv2.inRange(hsv, lo1, hi1)
-                mask2 = cv2.inRange(hsv, lo2, hi2)
-                current_mask = cv2.bitwise_or(mask1, mask2)
-            else:
-                current_mask = cv2.inRange(hsv, lo1, hi1)
-            mask = current_mask if mask is None else cv2.bitwise_or(mask, current_mask)
-        
-        # 自适应形态学（带迟滞，防止阈值附近模式跳变）
-        if mask is not None:
-            pixel_count = cv2.countNonZero(mask)
-            self._last_pixel_count = pixel_count
-            small_pixel_thresh = int(cfg.get('small_pixel_threshold', 150))
-            was_small = getattr(self, '_crosshair_small_mode', False)
-            if was_small:
-                is_small_mode = pixel_count <= int(small_pixel_thresh * 1.4)
-            else:
-                is_small_mode = pixel_count <= small_pixel_thresh
-            self._crosshair_small_mode = is_small_mode
-            if is_small_mode:
-                mask = cv2.dilate(mask, self._morph_kernel_dilate_small, iterations=1)
-                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._morph_kernel_close_small, iterations=1)
-                # 极少像素时用无模糊 HSV 补回被高斯吃掉的边缘（延迟 cvtColor 到需要时）
-                if pixel_count < small_pixel_thresh // 3:
-                    # 未模糊时 hsv 已是原始值，无需重复转换
-                    hsv_raw = hsv if _blur_skipped else cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-                    mask_raw = None
-                    for entry in cached_bounds:
-                        if entry is None:
-                            continue
-                        _, lo1, hi1, lo2, hi2 = entry
-                        if lo2 is not None:
-                            m1 = cv2.inRange(hsv_raw, lo1, hi1)
-                            m2 = cv2.inRange(hsv_raw, lo2, hi2)
-                            cm = cv2.bitwise_or(m1, m2)
-                        else:
-                            cm = cv2.inRange(hsv_raw, lo1, hi1)
-                        mask_raw = cm if mask_raw is None else cv2.bitwise_or(mask_raw, cm)
-                    if mask_raw is not None:
-                        mask_raw = cv2.dilate(mask_raw, self._morph_kernel_dilate_small, iterations=1)
-                        mask = cv2.bitwise_or(mask, mask_raw)
-
-                # 多帧 mask 累积：叠加前几帧的 mask，让闪烁的小目标积少成多
-                if self._crosshair_mask_accum is not None and self._crosshair_mask_accum.shape == mask.shape:
-                    # 衰减旧帧权重（约保留最近 3 帧的累积）
-                    self._crosshair_mask_accum = cv2.addWeighted(self._crosshair_mask_accum, 0.5, mask, 0.5, 0)
-                    # 对累积结果做阈值：超过半亮度的视为有效
-                    _, mask_combined = cv2.threshold(self._crosshair_mask_accum, 80, 255, cv2.THRESH_BINARY)
-                    mask = cv2.bitwise_or(mask, mask_combined)
-                else:
-                    self._crosshair_mask_accum = mask.copy()
-                self._crosshair_mask_accum_count += 1
-            else:
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._morph_kernel_open, iterations=1)
-                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._morph_kernel_close, iterations=1)
-                self._crosshair_mask_accum = None
-                self._crosshair_mask_accum_count = 0
-        
-        if not hasattr(self, '_crosshair_debug_counter'):
-            self._crosshair_debug_counter = 0
-        self._crosshair_debug_counter += 1
-        
-        show_debug = cfg.get('show_debug_log', False)
-        should_log = show_debug and (self._crosshair_debug_counter % 60 == 0)
-
-        if mask is None:
-            self.crosshair_debug_mask = None
-            if should_log:
-                print(f"准星找色: 未配置颜色范围")
-            self.crosshair_offset = (0.0, 0.0)
-            self.crosshair_lock_box = None
-            self._crosshair_ema_initialized = False
-            self._crosshair_prev_target = None
-            return
-        
-        debug_img = None
-        if cfg.get('show_mask', False):
-            debug_img = np.zeros_like(frame)
-            roi_filtered = cv2.bitwise_and(roi, roi, mask=mask)
-            roi_fh, roi_fw = roi_filtered.shape[:2]
-            debug_img[y1:y1+roi_fh, x1:x1+roi_fw] = roi_filtered
-            self.crosshair_debug_mask = debug_img
-        else:
-            self.crosshair_debug_mask = None
-        
-        if should_log:
-            non_zero = cv2.countNonZero(mask)
-
-        contours_info = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours = contours_info[0] if len(contours_info) == 2 else contours_info[1]
-        if not contours:
-            if should_log:
-                print(f"准星找色: 未找到轮廓 (匹配像素可能太少)")
-            self._crosshair_miss_count = getattr(self, '_crosshair_miss_count', 0) + 1
-            if self._crosshair_miss_count >= 3:
-                self._decay_crosshair_offset(cfg)
-            return
-            
-        min_area = float(cfg.get('min_area', 1.0))
-        max_area = float(cfg.get('max_area', 1000.0))
-        actual_roi_w = x2 - x1
-        actual_roi_h = y2 - y1
-        roi_cx = actual_roi_w / 2.0
-        roi_cy = actual_roi_h / 2.0
-        max_dist_sq = roi_cx * roi_cx + roi_cy * roi_cy
-        if max_dist_sq < 1.0:
-            max_dist_sq = 1.0
-        
-        # 先收集邻近小轮廓用于合并
-        is_small_mode = getattr(self, '_crosshair_small_mode', False)
-
-        valid_contours = []
-        for cnt in contours:
-            bx, by, bw, bh = cv2.boundingRect(cnt)
-            rect_area = bw * bh
-            if rect_area < min_area * 0.3 or rect_area > max_area * 2.0:
-                continue
-            if bh == 0:
-                continue
-            aspect_ratio = float(bw) / bh
-            if is_small_mode:
-                if aspect_ratio < 0.15 or aspect_ratio > 6.0:
-                    continue
-            elif aspect_ratio < 0.3 or aspect_ratio > 3.0:
-                continue
-
-            area = cv2.contourArea(cnt)
-            if area < min_area or area > max_area:
-                continue
-                
-            M = cv2.moments(cnt)
-            if M["m00"] > 0:
-                cX = M["m10"] / M["m00"]
-                cY = M["m01"] / M["m00"]
-            else:
-                cX = bx + bw / 2.0
-                cY = by + bh / 2.0
-
-            dist_sq = (cX - roi_cx) ** 2 + (cY - roi_cy) ** 2
-            valid_contours.append((cnt, dist_sq, area, (bx, by, bw, bh), (cX, cY), 0.0))
-
-        # 仅多轮廓时计算 convexHull solidity（单轮廓无需比较）
-        if len(valid_contours) > 1:
-            for idx, (cnt, dist_sq, area, rect, center, _) in enumerate(valid_contours):
-                hull = cv2.convexHull(cnt)
-                hull_area = cv2.contourArea(hull)
-                solidity = area / hull_area if hull_area > 0 else 0.0
-                valid_contours[idx] = (cnt, dist_sq, area, rect, center, solidity)
-
-        # 小目标模式下合并邻近轮廓：如果多个小轮廓中心距离很近，合为一个
-        if is_small_mode and len(valid_contours) > 1:
-            merge_dist = max(actual_roi_w, actual_roi_h) * 0.08
-            merge_dist_sq = merge_dist * merge_dist
-            merged = self._merge_nearby_contours(valid_contours, merge_dist_sq, roi_cx, roi_cy)
-            if merged:
-                valid_contours = merged
-
-        if not valid_contours:
-            if should_log:
-                print(f"准星找色: 没有符合条件的轮廓")
-            self._crosshair_miss_count = getattr(self, '_crosshair_miss_count', 0) + 1
-            if self._crosshair_miss_count >= 3:
-                self._decay_crosshair_offset(cfg)
-            return
-
-        # 加权评分：距离 60% + 面积倒数 25% + 紧凑度倒数 15%
-        sticky_bonus_sq = 0.0
-        prev_t = self._crosshair_prev_target
-        if prev_t is not None:
-            sticky_radius = max(actual_roi_w, actual_roi_h) * 0.15
-            sticky_bonus_sq = sticky_radius * sticky_radius
-
-        area_values = [c[2] for c in valid_contours]
-        max_area_val = max(area_values) if area_values else 1.0
-        if max_area_val < 1.0:
-            max_area_val = 1.0
-
-        best_score = float('inf')
-        best_idx = 0
-        for idx, (cnt, dist_sq, area, rect, center, solidity) in enumerate(valid_contours):
-            norm_dist = dist_sq / max_dist_sq
-            norm_inv_area = 1.0 - (area / max_area_val)
-            norm_inv_solid = 1.0 - solidity
-            score = norm_dist * 0.6 + norm_inv_area * 0.25 + norm_inv_solid * 0.15
-            if prev_t is not None:
-                d_prev_sq = (center[0] - prev_t[0]) ** 2 + (center[1] - prev_t[1]) ** 2
-                if d_prev_sq < sticky_bonus_sq:
-                    score *= 0.5
-            if score < best_score:
-                best_score = score
-                best_idx = idx
-
-        best_cnt = valid_contours[best_idx]
-        _, dist_sq, area, (bx, by, bw, bh), (cross_x_roi, cross_y_roi), _ = best_cnt
-        
-        self._crosshair_prev_target = (cross_x_roi, cross_y_roi)
-        
-        box = (x1 + bx, y1 + by, x1 + bx + bw, y1 + by + bh)
-        self.crosshair_lock_box = box
-        cross_x = x1 + cross_x_roi
-        cross_y = y1 + cross_y_roi
-        
-        if debug_img is not None:
-            cv2.circle(debug_img, (int(cross_x), int(cross_y)), 2, (255, 0, 0), -1)
-            
-        raw_offset_x = cross_x - w / 2.0
-        raw_offset_y = cross_y - h / 2.0
-
-        # 自适应 EMA：大偏移快速响应，小偏移精细平滑
-        ema_base = float(cfg.get('ema_smooth', 0.4))
-        ema_base = max(0.05, min(1.0, ema_base))
-        offset_mag = abs(raw_offset_x) + abs(raw_offset_y)
-        if offset_mag > 30.0:
-            ema_alpha = min(1.0, ema_base * 2.0)
-        elif offset_mag > 10.0:
-            ema_alpha = ema_base
-        else:
-            ema_alpha = max(0.05, ema_base * 0.6)
-
-        if not self._crosshair_ema_initialized:
-            self._crosshair_ema_x = raw_offset_x
-            self._crosshair_ema_y = raw_offset_y
-            self._crosshair_ema_initialized = True
-        else:
-            self._crosshair_ema_x += ema_alpha * (raw_offset_x - self._crosshair_ema_x)
-            self._crosshair_ema_y += ema_alpha * (raw_offset_y - self._crosshair_ema_y)
-
-        self.crosshair_offset = (self._crosshair_ema_x, self._crosshair_ema_y)
-        self._crosshair_pull_seq += 1
-        self._crosshair_miss_count = 0
-        self._crosshair_last_decay_time = time.perf_counter()
-        
-        if should_log and (abs(self._crosshair_ema_x) > 1.0 or abs(self._crosshair_ema_y) > 1.0):
-             print(f"准星找色: 锁定目标 area={area:.1f}, solidity={best_cnt[5]:.2f}, offset=({self._crosshair_ema_x:.1f}, {self._crosshair_ema_y:.1f})")
-
-    def _merge_nearby_contours(self, contours_data, merge_dist_sq, roi_cx, roi_cy):
-        """合并中心距离小于阈值的邻近轮廓，返回合并后的列表"""
-        n = len(contours_data)
-        parent = list(range(n))
-        def find(x):
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-        def union(a, b):
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[ra] = rb
-        for i in range(n):
-            ci = contours_data[i][4]
-            for j in range(i + 1, n):
-                cj = contours_data[j][4]
-                d_sq = (ci[0] - cj[0]) ** 2 + (ci[1] - cj[1]) ** 2
-                if d_sq < merge_dist_sq:
-                    union(i, j)
-        groups = {}
-        for i in range(n):
-            r = find(i)
-            groups.setdefault(r, []).append(i)
-        result = []
-        for indices in groups.values():
-            if len(indices) == 1:
-                result.append(contours_data[indices[0]])
-            else:
-                # 合并：面积相加，中心取面积加权平均
-                total_area = sum(contours_data[i][2] for i in indices)
-                if total_area < 0.001:
-                    total_area = 0.001
-                wcx = sum(contours_data[i][4][0] * contours_data[i][2] for i in indices) / total_area
-                wcy = sum(contours_data[i][4][1] * contours_data[i][2] for i in indices) / total_area
-                # 合并 bounding box
-                bx_min = min(contours_data[i][3][0] for i in indices)
-                by_min = min(contours_data[i][3][1] for i in indices)
-                bx_max = max(contours_data[i][3][0] + contours_data[i][3][2] for i in indices)
-                by_max = max(contours_data[i][3][1] + contours_data[i][3][3] for i in indices)
-                merged_rect = (bx_min, by_min, bx_max - bx_min, by_max - by_min)
-                dist_sq = (wcx - roi_cx) ** 2 + (wcy - roi_cy) ** 2
-                avg_solidity = sum(contours_data[i][5] for i in indices) / len(indices)
-                result.append((contours_data[indices[0]][0], dist_sq, total_area, merged_rect, (wcx, wcy), avg_solidity))
-        return result
-
-    def _decay_crosshair_offset(self, cfg):
-        """目标丢失时平滑衰减偏移量（帧率无关），而非瞬间归零"""
-        if self._crosshair_ema_initialized:
-            now = time.perf_counter()
-            last = getattr(self, '_crosshair_last_decay_time', now)
-            dt = now - last
-            self._crosshair_last_decay_time = now
-            # 半衰期 100ms，任何帧率下行为一致
-            decay = 0.5 ** (dt / 0.1) if dt > 0 else 0.7
-            self._crosshair_ema_x *= decay
-            self._crosshair_ema_y *= decay
-            if abs(self._crosshair_ema_x) < 0.3 and abs(self._crosshair_ema_y) < 0.3:
-                self._crosshair_ema_x = 0.0
-                self._crosshair_ema_y = 0.0
-                self._crosshair_ema_initialized = False
-                self._crosshair_prev_target = None
-            self.crosshair_offset = (self._crosshair_ema_x, self._crosshair_ema_y)
-            self._crosshair_pull_seq += 1
-        else:
-            self.crosshair_offset = (0.0, 0.0)
-        self.crosshair_lock_box = None
+        self._crosshair_tracker.update(frame, cfg)
 
     def _try_crosshair_pull(self, crosshair_cfg):
-        """执行准星找色回拉，每帧偏移量仅应用一次（防止1ms定时器重复回拉导致振荡）"""
-        seq = self._crosshair_pull_seq
-        if seq == self._crosshair_pull_consumed_seq:
-            return
-        self._crosshair_pull_consumed_seq = seq
-        dx, dy = self.crosshair_offset
-        # 缓存回拉参数，用值签名检测变化（dict id 不变但值会被 GUI 修改）
-        _sig = (crosshair_cfg.get('pull_deadzone'), crosshair_cfg.get('pull_k'), crosshair_cfg.get('pull_max_speed'))
-        if getattr(self, '_cached_pull_sig', None) != _sig:
-            try:
-                _deadzone = float(crosshair_cfg.get('pull_deadzone', self.pressed_key_config.get('move_deadzone', 1.0)))
-            except Exception:
-                _deadzone = 1.0
-            try:
-                _k = float(crosshair_cfg.get('pull_k', 0.12))
-            except Exception:
-                _k = 0.12
-            try:
-                _max_spd = float(crosshair_cfg.get('pull_max_speed', 6.0))
-            except Exception:
-                _max_spd = 6.0
-            self._cached_pull_params = (_deadzone, _k, _max_spd)
-            self._cached_pull_sig = _sig
-        pull_deadzone, pull_k, max_speed = self._cached_pull_params
-        if max_speed <= 0:
-            return
-        if abs(dx) <= pull_deadzone and abs(dy) <= pull_deadzone:
-            return
-        relative_move_x = max(-max_speed, min(max_speed, dx * pull_k))
-        relative_move_y = max(-max_speed, min(max_speed, dy * pull_k))
-        if abs(relative_move_x) > pull_deadzone or abs(relative_move_y) > pull_deadzone:
-            self.execute_move(relative_move_x, relative_move_y)
+        """委托给 CrosshairTracker，返回移动量后调用 execute_move"""
+        fallback_dz = self.pressed_key_config.get('move_deadzone', 1.0)
+        move = self._crosshair_tracker.try_pull(crosshair_cfg, fallback_dz)
+        if move is not None:
+            self.execute_move(move[0], move[1])
 
     def aim_bot_func(self, uTimerID, uMsg, dwUser, dw1, dw2):
         crosshair_cfg = self._get_crosshair_lock_config()
@@ -2437,17 +2014,18 @@ class Valorant:
                 crosshair_enabled = isinstance(crosshair_cfg, dict) and crosshair_cfg.get('enabled', False)
                 show_crosshair = bool(crosshair_cfg.get('show_crosshair', True))
                 show_lock_box = bool(crosshair_cfg.get('show_lock_box', True))
-                lock_box = self.crosshair_lock_box if crosshair_enabled else None
+                lock_box = self._crosshair_tracker.lock_box if crosshair_enabled else None
                 
                 # 如果开启了二值化显示，使用 mask 替换原图
                 final_screenshot = screenshot
-                if crosshair_enabled and crosshair_cfg.get('show_mask', False) and hasattr(self, 'crosshair_debug_mask') and self.crosshair_debug_mask is not None:
+                _dbg_mask = self._crosshair_tracker.debug_mask
+                if crosshair_enabled and crosshair_cfg.get('show_mask', False) and _dbg_mask is not None:
                     # 确保尺寸一致
-                    if self.crosshair_debug_mask.shape == screenshot.shape:
-                        final_screenshot = self.crosshair_debug_mask
+                    if _dbg_mask.shape == screenshot.shape:
+                        final_screenshot = _dbg_mask
                     else:
                         try:
-                            final_screenshot = cv2.resize(self.crosshair_debug_mask, (screenshot.shape[1], screenshot.shape[0]))
+                            final_screenshot = cv2.resize(_dbg_mask, (screenshot.shape[1], screenshot.shape[0]))
                         except Exception as e:
                             print(f'debug mask resize失败: {e}')
 
@@ -6082,90 +5660,23 @@ class Valorant:
         print(f'显示瞄准范围: {app_data}')
 
     def _get_crosshair_lock_config(self):
-        cfg = self.config.get('crosshair_color_lock')
-        if not isinstance(cfg, dict):
-            cfg = {}
-            self.config['crosshair_color_lock'] = cfg
-        if not getattr(self, '_crosshair_cfg_ensured', False):
-            self._ensure_crosshair_hsv_ranges(cfg)
-            self._crosshair_cfg_ensured = True
-        # only_when_aiming 可能被 GUI 设为 None，每次检查
-        if cfg.get('only_when_aiming') is None:
-            cfg['only_when_aiming'] = True
-        return cfg
+        return self._crosshair_tracker.get_config(self.config)
 
     def _ensure_crosshair_hsv_ranges(self, cfg):
-        cfg.setdefault('enabled', False)
-        cfg.setdefault('roi_width', 200)
-        cfg.setdefault('roi_height', 200)
-        cfg.setdefault('show_crosshair', True)
-        cfg.setdefault('show_lock_box', True)
-        cfg.setdefault('min_area', 5)
-        cfg.setdefault('last_rgb', [0, 0, 0])
-        cfg.setdefault('h_tolerance', 10)
-        cfg.setdefault('s_tolerance', 30)
-        cfg.setdefault('v_tolerance', 30)
-        cfg.setdefault('ema_smooth', 0.4)
-        cfg.setdefault('small_pixel_threshold', 150)
-        cfg.setdefault('only_when_aiming', True)
-        hsv_ranges = cfg.get('hsv_ranges')
-        if not isinstance(hsv_ranges, list) or len(hsv_ranges) == 0:
-            min_color = cfg.get('min_color', [0, 0, 0])
-            max_color = cfg.get('max_color', [255, 255, 255])
-            if isinstance(min_color, list) and len(min_color) >= 3 and isinstance(max_color, list) and len(max_color) >= 3:
-                bgr_min = np.array([[min_color[:3]]], dtype=np.uint8)
-                bgr_max = np.array([[max_color[:3]]], dtype=np.uint8)
-                hsv_min = cv2.cvtColor(bgr_min, cv2.COLOR_BGR2HSV)[0][0]
-                hsv_max = cv2.cvtColor(bgr_max, cv2.COLOR_BGR2HSV)[0][0]
-                cfg['hsv_ranges'] = [{
-                    'h_min': int(min(hsv_min[0], hsv_max[0])),
-                    'h_max': int(max(hsv_min[0], hsv_max[0])),
-                    's_min': int(min(hsv_min[1], hsv_max[1])),
-                    's_max': int(max(hsv_min[1], hsv_max[1])),
-                    'v_min': int(min(hsv_min[2], hsv_max[2])),
-                    'v_max': int(max(hsv_min[2], hsv_max[2]))
-                }]
-            else:
-                cfg['hsv_ranges'] = [{'h_min': 0, 'h_max': 179, 's_min': 0, 's_max': 255, 'v_min': 0, 'v_max': 255}]
-        if not isinstance(cfg.get('active_index'), int):
-            cfg['active_index'] = 0
-        if cfg['active_index'] < 0 or cfg['active_index'] >= len(cfg['hsv_ranges']):
-            cfg['active_index'] = 0
+        CrosshairTracker._ensure_defaults(cfg)
         return cfg
 
     def _normalize_hsv_value(self, value, min_value, max_value, default_value):
-        try:
-            number = int(value)
-        except Exception:
-            number = int(default_value)
-        return max(min_value, min(max_value, number))
+        return CrosshairTracker.normalize_hsv_value(value, min_value, max_value, default_value)
 
     def _normalize_hsv_range(self, hsv_range):
-        if not isinstance(hsv_range, dict):
-            hsv_range = {}
-        h_min = self._normalize_hsv_value(hsv_range.get('h_min', 0), 0, 179, 0)
-        h_max = self._normalize_hsv_value(hsv_range.get('h_max', 179), 0, 179, 179)
-        s_min = self._normalize_hsv_value(hsv_range.get('s_min', 0), 0, 255, 0)
-        s_max = self._normalize_hsv_value(hsv_range.get('s_max', 255), 0, 255, 255)
-        v_min = self._normalize_hsv_value(hsv_range.get('v_min', 0), 0, 255, 0)
-        v_max = self._normalize_hsv_value(hsv_range.get('v_max', 255), 0, 255, 255)
-        
-        # 不要在这里交换 h_min 和 h_max，因为我们可能需要支持跨越 0 度的范围（例如 红色：175 - 5）
-        # if h_max < h_min:
-        #    h_min, h_max = h_max, h_min
-            
-        if s_max < s_min:
-            s_min, s_max = s_max, s_min
-        if v_max < v_min:
-            v_min, v_max = v_max, v_min
-        return {'h_min': h_min, 'h_max': h_max, 's_min': s_min, 's_max': s_max, 'v_min': v_min, 'v_max': v_max}
+        return CrosshairTracker.normalize_hsv_range(hsv_range)
 
     def on_crosshair_lock_enabled_change(self, sender, app_data):
         cfg = self._get_crosshair_lock_config()
         cfg['enabled'] = bool(app_data)
         if not cfg['enabled']:
-            self.crosshair_offset = (0.0, 0.0)
-            self.crosshair_lock_box = None
+            self._crosshair_tracker.reset()
         print(f"准星找色: {('启用' if app_data else '禁用')}")
 
     def on_crosshair_roi_width_change(self, sender, app_data):
@@ -6303,92 +5814,22 @@ class Valorant:
         if not self.crosshair_pick_mode:
             return
         
-        # 强制更新截图以确保取色准确
         frame = self.screenshot_manager.get_screenshot((0, 0, self.screen_width, self.screen_height))
-        
         if frame is None:
-            # 如果截取失败，尝试使用上一帧
-            frame = self.last_crosshair_frame
+            frame = self._crosshair_tracker.last_frame
             print("警告: 实时截图失败，使用缓存帧")
-        
         if frame is None:
             print("错误: 无法获取画面进行取色")
             return
-            
-        h, w = frame.shape[:2]
-        center_x, center_y = w // 2, h // 2
-        
-        # 7x7 取色区域，用中位数代替均值（抗噪）
-        half = 3
-        x1 = max(0, center_x - half)
-        x2 = min(w, center_x + half + 1)
-        y1 = max(0, center_y - half)
-        y2 = min(h, center_y + half + 1)
-        
-        region = frame[y1:y2, x1:x2]
-        if region.size == 0:
-            return
-        
-        print(f"取色区域: {x1}:{x2}, {y1}:{y2} ({x2-x1}x{y2-y1}, 中心: {center_x},{center_y})")
-        
-        # 中位数取色：对每个通道分别取中位数，抗异常像素
-        pixels = region.reshape(-1, 3)
-        b, g, r = [int(np.median(pixels[:, ch])) for ch in range(3)]
-        
-        # 转换为HSV
-        hsv_pixel = np.uint8([[[b, g, r]]])
-        hsv = cv2.cvtColor(hsv_pixel, cv2.COLOR_BGR2HSV)[0][0]
-        h_val, s_val, v_val = [int(v) for v in hsv]
-        
-        print(f"原始取色值: BGR=[{b},{g},{r}], HSV=[{h_val},{s_val},{v_val}]")
-        
-        # 使用固定阈值偏移，支持 H 通道跨越边界（例如 179 -> 0）
-        def calc_h_range(value, offset):
-            low = value - offset
-            high = value + offset
-            # H通道特殊处理：不进行截断，保留原始计算值，后续逻辑会处理跨界
-            # 实际上，我们需要在这里处理好循环
-            # 但由于 UI 滑块和 _normalize_hsv_range 的逻辑，我们可能需要特殊处理
-            # 简单起见，我们在这里只做截断，跨界问题由 _normalize_hsv_range 和 update_crosshair_tracking 处理
-            # 如果要支持跨界，这里返回的值需要能体现跨界。
-            
-            # 现在的策略是：如果 high > 179，则 max 设为 high % 180；如果 low < 0，则 min 设为 180 + low
-            # 但是为了适应现有的 min/max 滑块逻辑，我们可能不得不接受截断，或者让用户手动去调那一点点跨界
-            # 除非我们修改 _normalize_hsv_range 不再自动交换 min/max
-            
-            # 让我们尝试支持 H 的跨界表示：
-            # 如果计算出的范围跨越了 0/180，比如 175 到 5
-            # 我们应该如何存储？
-            # 存储为 h_min=175, h_max=5
-            
-            h_min_res = value - offset
-            h_max_res = value + offset
-            
-            if h_min_res < 0:
-                h_min_res += 180
-            if h_max_res > 179:
-                h_max_res -= 180
-                
-            return int(h_min_res), int(h_max_res)
 
-        def calc_sv_range(value, min_val, max_val, offset):
-            low = value - offset
-            high = value + offset
-            return max(min_val, min(max_val, low)), max(min_val, min(max_val, high))
-            
         cfg = self._get_crosshair_lock_config()
-        
-        # 使用UI配置的容差
-        h_tol = int(cfg.get('h_tolerance', 10))
-        s_tol = int(cfg.get('s_tolerance', 30))
-        v_tol = int(cfg.get('v_tolerance', 30))
-        
-        h_min, h_max = calc_h_range(h_val, h_tol)
-        s_min, s_max = calc_sv_range(s_val, 0, 255, s_tol)
-        v_min, v_max = calc_sv_range(v_val, 0, 255, v_tol)
-        
-        # 立即保存到配置
-        new_range = {'h_min': h_min, 'h_max': h_max, 's_min': s_min, 's_max': s_max, 'v_min': v_min, 'v_max': v_max}
+        result = self._crosshair_tracker.pick_color(frame, cfg)
+        if result is None:
+            return
+
+        new_range, (r, g, b), (h_val, s_val, v_val) = result
+        print(f"取色区域: 中心 7x7, 原始取色值: BGR=[{b},{g},{r}], HSV=[{h_val},{s_val},{v_val}]")
+
         cfg['hsv_ranges'].append(new_range)
         cfg['active_index'] = len(cfg['hsv_ranges']) - 1
         cfg['last_rgb'] = [r, g, b]
