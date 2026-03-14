@@ -744,10 +744,9 @@ class AimPipeline:
                 self.last_target_count = current_total_count
                 return locked_target
             else:
-                # 锁定目标暂时丢失：宽限期内用最后位置保持锁定
+                # 锁定目标暂时丢失：宽限期内尝试用位置重关联
                 self._lock_grace_frames += 1
                 if self._lock_grace_frames <= self._lock_grace_max:
-                    # 宽限期内：保持锁定状态，用最后已知位置匹配最近目标
                     if self._locked_last_pos is not None:
                         lx, ly = self._locked_last_pos
                         best_d = 1e9
@@ -759,7 +758,6 @@ class AimPipeline:
                             if d < best_d:
                                 best_d = d
                                 best_t = t
-                        # 宽限期内用更大范围重关联（150px）
                         if best_t is not None and best_d < 150.0 * 150.0:
                             self._locked_track_id = best_t.get('track_id', best_t.get('id'))
                             self._locked_last_pos = best_t.get('pos')
@@ -767,8 +765,7 @@ class AimPipeline:
                             self._last_selected_target_pos = best_t.get('pos')
                             self._lock_grace_frames = 0
                             return best_t
-                    # 宽限期内但无法重关联，不选新目标
-                    return None
+                    # 无法重关联：fall through 让后续逻辑正常选目标
                 else:
                     # 宽限期耗尽：释放锁定
                     self._locked_track_id = None
