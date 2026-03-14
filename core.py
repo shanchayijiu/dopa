@@ -1929,7 +1929,9 @@ class Valorant:
                         except queue.Empty:
                             pass
                         self.que_trigger.put_nowait(boxes)
-            if infer_debug and self.screenshot_manager and (frame_count % 3 == 0):
+            # 射击时降低 debug 刷新频率（每6帧），减少 OSD 渲染开销
+            _debug_interval = 6 if self.aim_key_status else 3
+            if infer_debug and self.screenshot_manager and (frame_count % _debug_interval == 0):
                 if self.aim_key_status:
                     current_key = self.old_pressed_aim_key
                 else:
