@@ -173,7 +173,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
         # 为了性能，先过滤掉低置信度的
         class_scores = pred[:, 4:]
         class_ids = np.argmax(class_scores, axis=1).astype(np.int32)
-        scores = np.max(class_scores, axis=1)
+        scores = class_scores[np.arange(len(class_scores)), class_ids]
 
     # 初步置信度过滤
     valid_mask = scores > conf_thres
@@ -317,11 +317,16 @@ def nms(pred, confidence_threshold, iou_threshold, class_num):
     classes = classes[keep]
     return (boxes, scores, classes)
 
-def read_img(img_data, size=(320, 320)):
+def read_img(img_data, size=(320, 320), out_buffer=None):
     target_w, target_h = size
     h, w = img_data.shape[:2]
     if h == target_h and w == target_w:
-        # 截屏尺寸==模型尺寸，跳过 resize，直接 BGR→RGB + normalize + CHW
+        if out_buffer is not None:
+            # 直写到 pinned memory，跳过中间分配
+            buf = out_buffer.reshape(3, target_h, target_w)
+            np.copyto(buf, img_data[:, :, ::-1].transpose(2, 0, 1))
+            buf *= NORMALIZE_FACTOR
+            return None  # 数据已在 buffer 中
         blob = np.ascontiguousarray(img_data[:, :, ::-1].transpose(2, 0, 1), dtype=np.float32)
         blob *= NORMALIZE_FACTOR
         return blob.reshape(1, 3, target_h, target_w)

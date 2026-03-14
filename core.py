@@ -1680,6 +1680,11 @@ class Valorant:
         input_shape_weight = self.engine.get_input_shape()[3]
         input_shape_height = self.engine.get_input_shape()[2]
         print('模型输入尺寸：', input_shape_weight, input_shape_height)
+        # 预计算输出列数，避免每帧查询
+        if is_v8:
+            _output_cols = class_num + 4
+        else:
+            _output_cols = class_num + 5
         frame_count = 0
         start_time = time.perf_counter()
         last_fps_update_time = time.perf_counter()
@@ -1698,6 +1703,7 @@ class Valorant:
         _preprocess_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='preproc')
         _preprocess_future = None
         _preprocess_screenshot = None  # 保存截屏原图用于后续 debug 显示
+        aim_boxes = None  # 初始化，避免每帧 locals() 查找
 
         def _capture_and_preprocess():
             """截屏 + 准心找色 + 预处理，在后台线程执行"""
@@ -1777,22 +1783,19 @@ class Valorant:
                     print(f"[Infer] 推理异常: {infer_e}")
                 time.sleep(0.01)
                 continue
-            current_infer_time_ms = (time.perf_counter() - infer_start_time) * 1000
+            infer_end_time = time.perf_counter()
+            current_infer_time_ms = (infer_end_time - infer_start_time) * 1000
             latency_values.append(current_infer_time_ms)
-            current_latency_time = time.perf_counter()
-            if current_latency_time - last_latency_update_time >= 1.0 and latency_values:
+            if infer_end_time - last_latency_update_time >= 1.0 and latency_values:
                 avg_latency = sum(latency_values) / len(latency_values)
                 display_latency_ms = avg_latency
                 last_latency_text = f'latency: {avg_latency:.2f}ms'
                 latency_values = []
-                last_latency_update_time = current_latency_time
+                last_latency_update_time = infer_end_time
             infer_time_ms = display_latency_ms
             pred = outputs[0]
             if pred.ndim == 1:
-                if is_v8:
-                    C = self.engine.get_class_num_v8() + 4
-                else:
-                    C = self.engine.get_class_num() + 5
+                C = _output_cols
                 if pred.size % C!= 0:
                     raise ValueError(f'推理输出长度{pred.size}不能整除每行特征数{C}，请检查模型！')
                 pred = pred.reshape((-1), C)
@@ -1823,11 +1826,20 @@ class Valorant:
                 self._cached_class_iou = class_iou_thresholds
                 self._cached_conf_thresh = confidence_threshold
                 self._cached_iou_t = iou_t
+                # 缓存 selected_classes_set 和对应 numpy 数组
+                _sel_classes = self.pressed_key_config.get('classes', [])
+                _sel_set = set(_sel_classes) if _sel_classes else set()
+                if is_v8 and class_num == 1 and _sel_set and 0 not in _sel_set:
+                    _sel_set.add(0)
+                self._cached_selected_set = _sel_set
+                self._cached_selected_arr = np.array(list(_sel_set), dtype=int) if _sel_set else None
             else:
                 class_confidence_thresholds = self._cached_class_conf
                 class_iou_thresholds = self._cached_class_iou
                 confidence_threshold = self._cached_conf_thresh
                 iou_t = self._cached_iou_t
+            selected_classes_set = self._cached_selected_set
+            _cached_selected_arr = self._cached_selected_arr
             if is_v8:
                 adaptive_nms_enabled = (
                     self.config['small_target_enhancement']['enabled']
@@ -1847,24 +1859,18 @@ class Valorant:
                 )
             
             current_selected_classes = self.pressed_key_config.get('classes', [])
-            selected_classes_set = set(current_selected_classes) if current_selected_classes else set()
-            if is_v8 and class_num == 1 and selected_classes_set and 0 not in selected_classes_set:
-                # 单类模型兼容: 自动补齐类别0，避免因历史多类配置导致全过滤。
-                selected_classes_set.add(0)
             class_ids = []
+            aim_boxes = None
             if len(boxes) > 0:
                 if is_v8:
                     all_class_ids = classes.astype(int)
                 else:
                     all_class_ids = np.argmax(classes, axis=1).astype(int)
                 if selected_classes_set:
-                    _selected_arr = np.array(list(selected_classes_set), dtype=int)
-                    mask = np.isin(all_class_ids, _selected_arr)
+                    mask = np.isin(all_class_ids, _cached_selected_arr)
                     boxes = boxes[mask]
                     scores = scores[mask]
                     classes = classes[mask]
-                    if 'aim_boxes' in locals() and isinstance(aim_boxes, np.ndarray):
-                        aim_boxes = aim_boxes[mask]
                     class_ids = all_class_ids[mask].tolist()
                     if class_confidence_thresholds and len(boxes) > 0:
                         # 向量化逐类置信度过滤
@@ -1875,8 +1881,6 @@ class Valorant:
                             boxes = boxes[confidence_mask]
                             scores = scores[confidence_mask]
                             classes = classes[confidence_mask]
-                            if 'aim_boxes' in locals() and isinstance(aim_boxes, np.ndarray):
-                                aim_boxes = aim_boxes[confidence_mask]
                             class_ids = [class_ids[i] for i, keep in enumerate(confidence_mask) if keep]
                 else:
                     boxes = []

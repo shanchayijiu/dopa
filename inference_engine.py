@@ -123,6 +123,8 @@ class TensorRTInferenceEngine:
                     print(f'CUDA Device(0).use() 失败: {e}')
                 self._graph_supported = True
                 self._use_cupy_graph = True
+                self._cupy_rt = cupy.cuda.runtime
+                self._cupy = cupy
                 try:
                     self._cupy_stream = cupy.cuda.Stream(non_blocking=True)
                 except Exception:
@@ -240,19 +242,24 @@ class TensorRTInferenceEngine:
                 outputs.append({'host': host_mem, 'device': device_mem})
         return (inputs, outputs, bindings, stream)
 
-    def infer(self, input_array):
-        """执行模型推理（热路径优化：无 ctx.push/pop、无 import、缓存引用）"""
+    def infer(self, input_array=None):
+        """执行模型推理（热路径优化：无 ctx.push/pop、无 import、缓存引用）
+        
+        Args:
+            input_array: 输入数据。None 表示数据已直写到 get_input_buffer()。
+        """
         np = self._np
         cuda = self._cuda
         input_host = self._input_host
         output_host = self._output_host
-        np.copyto(input_host, input_array.ravel())
+        if input_array is not None:
+            np.copyto(input_host, input_array.reshape(-1))
         if self._use_cuda_graph and self._graph_supported and self._use_cupy_graph and self._cupy_stream is not None:
-            import cupy.cuda.runtime as rt
+            rt = self._cupy_rt
             try:
                 stream = self._cupy_stream
                 if self._graph is None:
-                    import cupy
+                    cupy = self._cupy
                     stream.synchronize()
                     rt.memcpyAsync(int(self._input_device), input_host.ctypes.data,
                                    self._input_nbytes, 1, stream.ptr)
@@ -295,6 +302,10 @@ class TensorRTInferenceEngine:
         cuda.memcpy_dtoh_async(output_host, self._output_device, self.stream)
         self.stream.synchronize()
         return [output_host]
+
+    def get_input_buffer(self):
+        """返回 pinned memory 输入缓冲区，供外部直写以跳过 copyto"""
+        return self._input_host
 
     def get_input_shape(self):
         """获取模型输入形状"""
