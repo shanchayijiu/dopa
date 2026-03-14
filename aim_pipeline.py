@@ -891,17 +891,22 @@ class AimPipeline:
             det_meta = []  # 保存每个检测的元信息
             _id_left = float(identify_left)
             _id_top = float(identify_top)
+            _tracker_on = self.tracker_enabled
             for i in range(len(aim_targets)):
                 item = aim_targets[i]
                 result_center_x, result_center_y, width, height = item
                 class_id = class_ids[i] if i < len(class_ids) else 0
 
-                aim_position = self._resolve_aim_position_for_target(
-                    pressed_key_config=pressed_key_config,
-                    class_id=class_id,
-                    target_id=None,
-                    stable_random=False,
-                )
+                # tracker 启用时跳过首次 aim_position 计算（后续会用 track_id 重算）
+                if _tracker_on:
+                    aim_position = 0.5
+                else:
+                    aim_position = self._resolve_aim_position_for_target(
+                        pressed_key_config=pressed_key_config,
+                        class_id=class_id,
+                        target_id=None,
+                        stable_random=False,
+                    )
                 absolute_area = float(width) * float(height)
                 relative_size = absolute_area / model_area
 
