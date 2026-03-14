@@ -55,8 +55,6 @@ class CrosshairTracker:
         # ── HSV bounds 缓存 ──
         self._bounds_cache_key = None
         self._bounds_cache = []
-        self._wide_cache_key = None
-        self._wide_cache = []
 
         # ── 回拉参数缓存 ──
         self._pull_sig = None
@@ -104,8 +102,8 @@ class CrosshairTracker:
         cfg.setdefault('min_area', 5)
         cfg.setdefault('last_rgb', [0, 0, 0])
         cfg.setdefault('h_tolerance', 10)
-        cfg.setdefault('s_tolerance', 40)
-        cfg.setdefault('v_tolerance', 60)
+        cfg.setdefault('s_tolerance', 30)
+        cfg.setdefault('v_tolerance', 30)
         cfg.setdefault('ema_smooth', 0.4)
         cfg.setdefault('small_pixel_threshold', 150)
         cfg.setdefault('only_when_aiming', True)
@@ -200,8 +198,11 @@ class CrosshairTracker:
         y2 = min(h, y1 + roi_h)
         roi = frame[y1:y2, x1:x2]
 
-        # 不做高斯模糊：准星是 1-2px 细线，模糊会把准星色和背景混合导致丢失
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        blur_skipped = roi_w <= 30 or roi_h <= 30
+        if blur_skipped:
+            hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        else:
+            hsv = cv2.cvtColor(cv2.GaussianBlur(roi, (3, 3), 0), cv2.COLOR_BGR2HSV)
 
         # ── HSV bounds 缓存 ──
         hsv_ranges = cfg.get('hsv_ranges', [])
@@ -220,26 +221,9 @@ class CrosshairTracker:
         cache_key = (ranges_sig, show_active_only, active_index, h_tol, s_tol, v_tol)
         if self._bounds_cache_key != cache_key:
             self._bounds_cache = self._build_bounds(
-                hsv_ranges, show_active_only, active_index, h_tol, s_tol, v_tol,
-                wide=False)
+                hsv_ranges, show_active_only, active_index, h_tol, s_tol, v_tol)
             self._bounds_cache_key = cache_key
         cached = self._bounds_cache
-
-        # 宽容差 bounds（仅当存在高饱和度颜色时才构建，用作窄容差检测失败的回退）
-        has_high_sat = any(
-            isinstance(r, dict) and int(r.get('s_center', 0)) > 80
-            for r in hsv_ranges
-        )
-        if has_high_sat:
-            wide_key = ('w',) + cache_key
-            if self._wide_cache_key != wide_key:
-                self._wide_cache = self._build_bounds(
-                    hsv_ranges, show_active_only, active_index, h_tol, s_tol, v_tol,
-                    wide=True)
-                self._wide_cache_key = wide_key
-            wide_cached = self._wide_cache
-        else:
-            wide_cached = None
 
         # ── inRange ──
         mask = None
@@ -253,39 +237,6 @@ class CrosshairTracker:
             else:
                 cm = cv2.inRange(hsv, lo1, hi1)
             mask = cm if mask is None else cv2.bitwise_or(mask, cm)
-
-        # 窄容差捕获的准星像素不足时，回退到宽容差
-        if wide_cached is not None and mask is not None:
-            mh0, mw0 = mask.shape[:2]
-            qh, qw = max(1, mh0 // 4), max(1, mw0 // 4)
-            if cv2.countNonZero(mask[qh:mh0 - qh, qw:mw0 - qw]) < 5:
-                mask = None
-                for entry in wide_cached:
-                    if entry is None:
-                        continue
-                    _, lo1, hi1, lo2, hi2 = entry
-                    if lo2 is not None:
-                        cm = cv2.bitwise_or(cv2.inRange(hsv, lo1, hi1),
-                                            cv2.inRange(hsv, lo2, hi2))
-                    else:
-                        cm = cv2.inRange(hsv, lo1, hi1)
-                    mask = cm if mask is None else cv2.bitwise_or(mask, cm)
-
-        # ── 中心裁剪：准星固定在 ROI 中心，仅保留中心区域减少背景干扰 ──
-        # 对于绿色/蓝色准星尤为重要——背景色相接近时 200×200 会匹配大量背景
-        if mask is not None:
-            fh, fw = mask.shape[:2]
-            inner_half = 30  # 中心 60×60 区域
-            iy1 = max(0, fh // 2 - inner_half)
-            iy2 = min(fh, fh // 2 + inner_half)
-            ix1 = max(0, fw // 2 - inner_half)
-            ix2 = min(fw, fw // 2 + inner_half)
-            inner_mask = mask[iy1:iy2, ix1:ix2]
-            if cv2.countNonZero(inner_mask) >= 3:
-                # 中心有足够像素，只用中心区域（大幅降低背景噪声）
-                cropped = np.zeros_like(mask)
-                cropped[iy1:iy2, ix1:ix2] = inner_mask
-                mask = cropped
 
         # ── 形态学 ──
         if mask is not None:
@@ -312,6 +263,22 @@ class CrosshairTracker:
             if is_small:
                 mask = cv2.dilate(mask, self._kern_dilate_s, iterations=1)
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kern_close_s, iterations=1)
+                if pixel_count < small_thresh // 3:
+                    hsv_raw = hsv if blur_skipped else cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+                    mask_raw = None
+                    for entry in cached:
+                        if entry is None:
+                            continue
+                        _, lo1, hi1, lo2, hi2 = entry
+                        if lo2 is not None:
+                            cm = cv2.bitwise_or(cv2.inRange(hsv_raw, lo1, hi1),
+                                                cv2.inRange(hsv_raw, lo2, hi2))
+                        else:
+                            cm = cv2.inRange(hsv_raw, lo1, hi1)
+                        mask_raw = cm if mask_raw is None else cv2.bitwise_or(mask_raw, cm)
+                    if mask_raw is not None:
+                        mask_raw = cv2.dilate(mask_raw, self._kern_dilate_s, iterations=1)
+                        mask = cv2.bitwise_or(mask, mask_raw)
                 # 多帧累积
                 if self._mask_accum is not None and self._mask_accum.shape == mask.shape:
                     self._mask_accum = cv2.addWeighted(self._mask_accum, 0.5, mask, 0.5, 0)
@@ -321,13 +288,11 @@ class CrosshairTracker:
                     self._mask_accum = mask.copy()
                 self._mask_accum_count += 1
             else:
-                # 非小目标模式的形态学处理
+                # Density-adaptive morphology: when many pixels match
+                # (e.g. green range hitting environment), use stronger opening
                 density = pixel_count / max(1, mw * mh)
-                if density > 0.08:
-                    # 高密度噪声：用 OPEN 去噪，强度随密度增加
-                    open_iter = 2 if density > 0.15 else 1
-                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kern_open, iterations=open_iter)
-                # 所有情况都做 CLOSE 连接断裂像素
+                open_iter = 2 if density > 0.15 else 1
+                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kern_open, iterations=open_iter)
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kern_close, iterations=1)
                 # Lightweight temporal smoothing to stabilize mask across frames
                 if self._mask_accum is not None and self._mask_accum.shape == mask.shape:
@@ -374,7 +339,7 @@ class CrosshairTracker:
             if should_log:
                 print("准星找色: 未找到轮廓 (匹配像素可能太少)")
             self._miss_count += 1
-            if self._miss_count >= 15:
+            if self._miss_count >= 5:
                 self._decay(cfg)
             return
 
@@ -399,7 +364,7 @@ class CrosshairTracker:
             if should_log:
                 print("准星找色: 没有符合条件的轮廓")
             self._miss_count += 1
-            if self._miss_count >= 15:
+            if self._miss_count >= 5:
                 self._decay(cfg)
             return
 
@@ -543,61 +508,30 @@ class CrosshairTracker:
 
     def pick_color(self, frame, cfg):
         """
-        在画面中心区域取色，通过对比背景自动分离准星像素。
-        返回 (new_hsv_range, rgb, hsv_values) 或 None
+        在画面中心 7×7 区域取色，返回 (new_hsv_range, rgb, hsv_values) 或 None
         """
         if frame is None:
             return None
         h, w = frame.shape[:2]
         cx, cy = w // 2, h // 2
-
-        # 取较大区域用于背景参考
-        half_bg = 8  # 17×17
-        bx1 = max(0, cx - half_bg)
-        bx2 = min(w, cx + half_bg + 1)
-        by1 = max(0, cy - half_bg)
-        by2 = min(h, cy + half_bg + 1)
-        region = frame[by1:by2, bx1:bx2].astype(np.float32)
+        half = 3
+        x1 = max(0, cx - half)
+        x2 = min(w, cx + half + 1)
+        y1 = max(0, cy - half)
+        y2 = min(h, cy + half + 1)
+        region = frame[y1:y2, x1:x2]
         if region.size == 0:
             return None
 
-        rh, rw = region.shape[:2]
-        rcx, rcy = rw // 2, rh // 2
-
-        # 四角 3×3 作为背景参考（准星不可能在角落）
-        cs = 3
-        corners = np.concatenate([
-            region[:cs, :cs].reshape(-1, 3),
-            region[:cs, -cs:].reshape(-1, 3),
-            region[-cs:, :cs].reshape(-1, 3),
-            region[-cs:, -cs:].reshape(-1, 3),
-        ])
-        bg_color = np.median(corners, axis=0)
-
-        # 中心 5×5 为准星候选区
-        half_fg = 2
-        fg = region[rcy - half_fg:rcy + half_fg + 1,
-                     rcx - half_fg:rcx + half_fg + 1].reshape(-1, 3)
-
-        # 找与背景色差最大的像素
-        diffs = np.sqrt(np.sum((fg - bg_color) ** 2, axis=1))
-        threshold = max(25.0, np.max(diffs) * 0.4)
-        crosshair_mask = diffs > threshold
-
-        if np.any(crosshair_mask):
-            crosshair_pixels = fg[crosshair_mask]
-        else:
-            # 回退：取差异最大的单像素
-            crosshair_pixels = fg[np.argmax(diffs):np.argmax(diffs) + 1]
-
-        b, g, r = [int(np.median(crosshair_pixels[:, ch])) for ch in range(3)]
+        pixels = region.reshape(-1, 3)
+        b, g, r = [int(np.median(pixels[:, ch])) for ch in range(3)]
         hsv_pixel = np.uint8([[[b, g, r]]])
         hsv = cv2.cvtColor(hsv_pixel, cv2.COLOR_BGR2HSV)[0][0]
         h_val, s_val, v_val = int(hsv[0]), int(hsv[1]), int(hsv[2])
 
         h_tol = int(cfg.get('h_tolerance', 10))
-        s_tol = int(cfg.get('s_tolerance', 40))
-        v_tol = int(cfg.get('v_tolerance', 60))
+        s_tol = int(cfg.get('s_tolerance', 30))
+        v_tol = int(cfg.get('v_tolerance', 30))
 
         h_min = h_val - h_tol
         h_max = h_val + h_tol
@@ -636,7 +570,7 @@ class CrosshairTracker:
     # ────────────────────────────────────────────
 
     def _build_bounds(self, hsv_ranges, show_active_only, active_index,
-                      h_tol=10, s_tol=30, v_tol=30, wide=False):
+                      h_tol=10, s_tol=30, v_tol=30):
         bounds = []
         for i, hr in enumerate(hsv_ranges):
             if show_active_only and i != active_index:
@@ -658,22 +592,13 @@ class CrosshairTracker:
                 s_hi = min(255, sc + s_tol)
                 v_lo = max(0, vc - v_tol)
                 v_hi = min(255, vc + v_tol)
-                if wide and sc > 80:
-                    # 宽容差模式：H 是主要区分手段，S/V 自动放宽以
-                    # 捕获抗锯齿和混色的边缘像素（可到中心值的 35%）
-                    auto_s_lo = max(15, int(sc * 0.35))
-                    auto_v_lo = max(15, int(vc * 0.35))
-                    s_lo = min(s_lo, auto_s_lo)
-                    s_hi = 255
-                    v_lo = min(v_lo, auto_v_lo)
-                    v_hi = 255
             else:
                 nr = self.normalize_hsv_range(hr)
                 h_lo, h_hi = nr['h_min'], nr['h_max']
                 s_lo, s_hi = nr['s_min'], nr['s_max']
                 v_lo, v_hi = nr['v_min'], nr['v_max']
-            # Saturation floor: reject near-gray noise, but keep crosshair pixels
-            s_lo = max(s_lo, 15)
+            # Saturation floor: reject gray/near-gray noise pixels
+            s_lo = max(s_lo, 30)
             if h_lo > h_hi:
                 bounds.append((
                     hr,
