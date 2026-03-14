@@ -271,6 +271,22 @@ class CrosshairTracker:
                         cm = cv2.inRange(hsv, lo1, hi1)
                     mask = cm if mask is None else cv2.bitwise_or(mask, cm)
 
+        # ── 中心裁剪：准星固定在 ROI 中心，仅保留中心区域减少背景干扰 ──
+        # 对于绿色/蓝色准星尤为重要——背景色相接近时 200×200 会匹配大量背景
+        if mask is not None:
+            fh, fw = mask.shape[:2]
+            inner_half = 30  # 中心 60×60 区域
+            iy1 = max(0, fh // 2 - inner_half)
+            iy2 = min(fh, fh // 2 + inner_half)
+            ix1 = max(0, fw // 2 - inner_half)
+            ix2 = min(fw, fw // 2 + inner_half)
+            inner_mask = mask[iy1:iy2, ix1:ix2]
+            if cv2.countNonZero(inner_mask) >= 3:
+                # 中心有足够像素，只用中心区域（大幅降低背景噪声）
+                cropped = np.zeros_like(mask)
+                cropped[iy1:iy2, ix1:ix2] = inner_mask
+                mask = cropped
+
         # ── 形态学 ──
         if mask is not None:
             pixel_count = cv2.countNonZero(mask)
