@@ -203,15 +203,20 @@ class CrosshairTracker:
         hsv_ranges = cfg.get('hsv_ranges', [])
         show_active_only = cfg.get('show_active_only', False)
         active_index = int(cfg.get('active_index', 0))
+        h_tol = int(cfg.get('h_tolerance', 10))
+        s_tol = int(cfg.get('s_tolerance', 30))
+        v_tol = int(cfg.get('v_tolerance', 30))
 
         ranges_sig = tuple(
             (r.get('h_min'), r.get('h_max'), r.get('s_min'),
-             r.get('s_max'), r.get('v_min'), r.get('v_max'))
+             r.get('s_max'), r.get('v_min'), r.get('v_max'),
+             r.get('h_center'), r.get('s_center'), r.get('v_center'))
             for r in hsv_ranges if isinstance(r, dict)
         )
-        cache_key = (ranges_sig, show_active_only, active_index)
+        cache_key = (ranges_sig, show_active_only, active_index, h_tol, s_tol, v_tol)
         if self._bounds_cache_key != cache_key:
-            self._bounds_cache = self._build_bounds(hsv_ranges, show_active_only, active_index)
+            self._bounds_cache = self._build_bounds(
+                hsv_ranges, show_active_only, active_index, h_tol, s_tol, v_tol)
             self._bounds_cache_key = cache_key
         cached = self._bounds_cache
 
@@ -333,7 +338,7 @@ class CrosshairTracker:
                 self._decay(cfg)
             return
 
-        min_area = float(cfg.get('min_area', 1.0))
+        min_area = max(1.0, float(cfg.get('min_area', 1.0)))
         max_area = float(cfg.get('max_area', 1000.0))
         actual_w = x2 - x1
         actual_h = y2 - y1
@@ -528,7 +533,8 @@ class CrosshairTracker:
 
         new_range = {'h_min': h_min, 'h_max': h_max,
                      's_min': s_min, 's_max': s_max,
-                     'v_min': v_min, 'v_max': v_max}
+                     'v_min': v_min, 'v_max': v_max,
+                     'h_center': h_val, 's_center': s_val, 'v_center': v_val}
         return new_range, (r, g, b), (h_val, s_val, v_val)
 
     def reset(self):
@@ -550,19 +556,39 @@ class CrosshairTracker:
     #  内部方法
     # ────────────────────────────────────────────
 
-    def _build_bounds(self, hsv_ranges, show_active_only, active_index):
+    def _build_bounds(self, hsv_ranges, show_active_only, active_index,
+                      h_tol=10, s_tol=30, v_tol=30):
         bounds = []
         for i, hr in enumerate(hsv_ranges):
             if show_active_only and i != active_index:
                 bounds.append(None)
                 continue
-            nr = self.normalize_hsv_range(hr)
-            h_lo, h_hi = nr['h_min'], nr['h_max']
-            s_lo, s_hi = nr['s_min'], nr['s_max']
-            v_lo, v_hi = nr['v_min'], nr['v_max']
+            # Recompute from center values if available, so tolerance
+            # changes take effect without re-picking color
+            if 'h_center' in hr:
+                hc = int(hr['h_center'])
+                sc = int(hr['s_center'])
+                vc = int(hr['v_center'])
+                h_lo = hc - h_tol
+                h_hi = hc + h_tol
+                if h_lo < 0:
+                    h_lo += 180
+                if h_hi > 179:
+                    h_hi -= 180
+                s_lo = max(0, sc - s_tol)
+                s_hi = min(255, sc + s_tol)
+                v_lo = max(0, vc - v_tol)
+                v_hi = min(255, vc + v_tol)
+            else:
+                nr = self.normalize_hsv_range(hr)
+                h_lo, h_hi = nr['h_min'], nr['h_max']
+                s_lo, s_hi = nr['s_min'], nr['s_max']
+                v_lo, v_hi = nr['v_min'], nr['v_max']
+            # Saturation floor: reject gray/near-gray noise pixels
+            s_lo = max(s_lo, 30)
             if h_lo > h_hi:
                 bounds.append((
-                    nr,
+                    hr,
                     np.array([h_lo, s_lo, v_lo], dtype=np.uint8),
                     np.array([179, s_hi, v_hi], dtype=np.uint8),
                     np.array([0, s_lo, v_lo], dtype=np.uint8),
@@ -570,7 +596,7 @@ class CrosshairTracker:
                 ))
             else:
                 bounds.append((
-                    nr,
+                    hr,
                     np.array([h_lo, s_lo, v_lo], dtype=np.uint8),
                     np.array([h_hi, s_hi, v_hi], dtype=np.uint8),
                     None, None,
