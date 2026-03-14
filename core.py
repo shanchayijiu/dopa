@@ -2066,7 +2066,7 @@ class Valorant:
                 )
                 if move is not None:
                     self.execute_move(move[0], move[1])
-                elif crosshair_enabled:
+                elif crosshair_enabled and only_when_aiming:
                     self._try_crosshair_pull(crosshair_cfg)
         elif crosshair_enabled and not only_when_aiming:
             self._try_crosshair_pull(crosshair_cfg)
