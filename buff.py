@@ -1,4 +1,4 @@
-﻿             """
+"""
 验证模块（已禁用）
 保留 Buff_Single / Buff_User 类导出以满足 core.py、remote_config.py 的 import 依赖。
 原始文件约 2500 行，已精简为存根。
