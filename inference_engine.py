@@ -64,6 +64,8 @@ class TensorRTInferenceEngine:
             raise RuntimeError(
                 f'未检测到TensorRT/CUDA环境，无法使用TensorRT加速。请安装相关依赖或切换到ONNX Runtime。原始错误: {e}')
         cuda.init()
+        self._cuda = cuda  # 缓存，避免每帧 import
+        self._np = __import__('numpy')
         self.logger = trt.Logger(trt.Logger.INFO)
         self.device = cuda.Device(0)
         self.ctx = self.device.retain_primary_context()
@@ -95,6 +97,22 @@ class TensorRTInferenceEngine:
                     raise RuntimeError('TensorRT engine 加载失败，请确认onnx模型和环境！')
             self.context = self.engine.create_execution_context()
             self.inputs, self.outputs, self.bindings, self.stream = self.allocate_buffers()
+            # 缓存 binding 名称和地址，避免每帧查找
+            self._input_binding = self.engine[0]
+            self._output_binding = self.engine[1]
+            self._input_host = self.inputs[0]['host']
+            self._input_device = self.inputs[0]['device']
+            self._output_host = self.outputs[0]['host']
+            self._output_device = self.outputs[0]['device']
+            self._input_nbytes = self._input_host.nbytes
+            self._output_nbytes = self._output_host.nbytes
+            # 预设 tensor 地址（TRT 10.x 仅需设一次）
+            try:
+                self.context.set_tensor_address(self._input_binding, int(self._input_device))
+                self.context.set_tensor_address(self._output_binding, int(self._output_device))
+                self._use_v3_api = True
+            except AttributeError:
+                self._use_v3_api = False
             try:
                 import cupy
                 import cupy.cuda.graph as cuda_graph
@@ -223,93 +241,60 @@ class TensorRTInferenceEngine:
         return (inputs, outputs, bindings, stream)
 
     def infer(self, input_array):
-        """
-        执行模型推理
-
-        Args:
-            input_array: 输入数据数组
-
-        Returns:
-            list: 推理结果
-        """
-        cuda = _import_cuda_driver()
-        import numpy as np
-        use_graph = bool(
-            getattr(self, '_use_cuda_graph', False) and getattr(self, '_graph_supported', False) and getattr(self,
-                                                                                                             '_use_cupy_graph',
-                                                                                                             False) and (
-                        self._cupy_stream is not None))
-        self.ctx.push()
-        try:
-            np.copyto(self.inputs[0]['host'], input_array.ravel())
-            if use_graph:
-                import cupy
-                import cupy.cuda.runtime as rt
-                try:
-                    stream = self._cupy_stream
-                    if self._graph is None:
-                        stream.synchronize()
-                        rt.memcpyAsync(int(self.inputs[0]['device']), self.inputs[0]['host'].ctypes.data,
-                                       self.inputs[0]['host'].nbytes, 1, stream.ptr)
-                        try:
-                            input_binding = self.engine[0]
-                            output_binding = self.engine[1]
-                            self.context.set_tensor_address(input_binding, int(self.inputs[0]['device']))
-                            self.context.set_tensor_address(output_binding, int(self.outputs[0]['device']))
-                            self.context.execute_async_v3(stream_handle=int(stream.ptr))
-                        except AttributeError:
-                            self.context.set_binding_address(0, int(self.inputs[0]['device']))
-                            self.context.set_binding_address(1, int(self.outputs[0]['device']))
-                            self.context.execute_async_v2(bindings=self.bindings, stream_handle=int(stream.ptr))
-                        rt.memcpyAsync(self.outputs[0]['host'].ctypes.data, int(self.outputs[0]['device']),
-                                       self.outputs[0]['host'].nbytes, 2, stream.ptr)
-                        stream.synchronize()
-                        self._graph_warmed = True
-                        try:
-                            stream.begin_capture(mode=cupy.cuda.graph.CaptureMode.RELAXED)
-                        except Exception:
-                            stream.begin_capture()
-                        rt.memcpyAsync(int(self.inputs[0]['device']), self.inputs[0]['host'].ctypes.data,
-                                       self.inputs[0]['host'].nbytes, 1, stream.ptr)
-                        try:
-                            input_binding = self.engine[0]
-                            output_binding = self.engine[1]
-                            self.context.set_tensor_address(input_binding, int(self.inputs[0]['device']))
-                            self.context.set_tensor_address(output_binding, int(self.outputs[0]['device']))
-                            self.context.execute_async_v3(stream_handle=int(stream.ptr))
-                        except AttributeError:
-                            self.context.set_binding_address(0, int(self.inputs[0]['device']))
-                            self.context.set_binding_address(1, int(self.outputs[0]['device']))
-                            self.context.execute_async_v2(bindings=self.bindings, stream_handle=int(stream.ptr))
-                        rt.memcpyAsync(self.outputs[0]['host'].ctypes.data, int(self.outputs[0]['device']),
-                                       self.outputs[0]['host'].nbytes, 2, stream.ptr)
-                        self._graph = stream.end_capture()
-                        self._graph.launch(stream)
-                        stream.synchronize()
-                        return [self.outputs[0]['host']]
+        """执行模型推理（热路径优化：无 ctx.push/pop、无 import、缓存引用）"""
+        np = self._np
+        cuda = self._cuda
+        input_host = self._input_host
+        output_host = self._output_host
+        np.copyto(input_host, input_array.ravel())
+        if self._use_cuda_graph and self._graph_supported and self._use_cupy_graph and self._cupy_stream is not None:
+            import cupy.cuda.runtime as rt
+            try:
+                stream = self._cupy_stream
+                if self._graph is None:
+                    import cupy
+                    stream.synchronize()
+                    rt.memcpyAsync(int(self._input_device), input_host.ctypes.data,
+                                   self._input_nbytes, 1, stream.ptr)
+                    if self._use_v3_api:
+                        self.context.execute_async_v3(stream_handle=int(stream.ptr))
+                    else:
+                        self.context.execute_async_v2(bindings=self.bindings, stream_handle=int(stream.ptr))
+                    rt.memcpyAsync(output_host.ctypes.data, int(self._output_device),
+                                   self._output_nbytes, 2, stream.ptr)
+                    stream.synchronize()
+                    self._graph_warmed = True
+                    try:
+                        stream.begin_capture(mode=cupy.cuda.graph.CaptureMode.RELAXED)
+                    except Exception:
+                        stream.begin_capture()
+                    rt.memcpyAsync(int(self._input_device), input_host.ctypes.data,
+                                   self._input_nbytes, 1, stream.ptr)
+                    if self._use_v3_api:
+                        self.context.execute_async_v3(stream_handle=int(stream.ptr))
+                    else:
+                        self.context.execute_async_v2(bindings=self.bindings, stream_handle=int(stream.ptr))
+                    rt.memcpyAsync(output_host.ctypes.data, int(self._output_device),
+                                   self._output_nbytes, 2, stream.ptr)
+                    self._graph = stream.end_capture()
                     self._graph.launch(stream)
                     stream.synchronize()
-                    return [self.outputs[0]['host']]
-                except Exception as e:
-                    print(f'[TRT] CUDA Graph 捕获失败，回退常规路径: {e}')
-                    self._use_cuda_graph = False
-                    self._graph_supported = False
-            cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
-            try:
-                input_binding = self.engine[0]
-                output_binding = self.engine[1]
-                self.context.set_tensor_address(input_binding, int(self.inputs[0]['device']))
-                self.context.set_tensor_address(output_binding, int(self.outputs[0]['device']))
-                self.context.execute_async_v3(stream_handle=int(self.stream.handle))
-            except AttributeError:
-                self.context.set_binding_address(0, int(self.inputs[0]['device']))
-                self.context.set_binding_address(1, int(self.outputs[0]['device']))
-                self.context.execute_async_v2(bindings=self.bindings, stream_handle=int(self.stream.handle))
-            cuda.memcpy_dtoh_async(self.outputs[0]['host'], self.outputs[0]['device'], self.stream)
-            self.stream.synchronize()
-            return [self.outputs[0]['host']]
-        finally:
-            self.ctx.pop()
+                    return [output_host]
+                self._graph.launch(stream)
+                stream.synchronize()
+                return [output_host]
+            except Exception as e:
+                print(f'[TRT] CUDA Graph \u6355\u83b7\u5931\u8d25\uff0c\u56de\u9000\u5e38\u89c4\u8def\u5f84: {e}')
+                self._use_cuda_graph = False
+                self._graph_supported = False
+        cuda.memcpy_htod_async(self._input_device, input_host, self.stream)
+        if self._use_v3_api:
+            self.context.execute_async_v3(stream_handle=int(self.stream.handle))
+        else:
+            self.context.execute_async_v2(bindings=self.bindings, stream_handle=int(self.stream.handle))
+        cuda.memcpy_dtoh_async(output_host, self._output_device, self.stream)
+        self.stream.synchronize()
+        return [output_host]
 
     def get_input_shape(self):
         """获取模型输入形状"""
