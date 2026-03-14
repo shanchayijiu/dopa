@@ -266,8 +266,8 @@ class DualAxisPID:
         y_output = self._apply_limits_and_anti_windup('y', y_output_unsat)
         x_output, y_output = self._apply_smoothing(x_output, y_output, error_x, error_y, delta_time)
         error_magnitude = _sqrt(error_x * error_x + error_y * error_y)
-        if error_magnitude < 5.0:
-            deadzone_factor = max(0.1, error_magnitude / 5.0)
+        if error_magnitude < 2.0:
+            deadzone_factor = max(0.3, error_magnitude / 2.0)
             x_output *= deadzone_factor
             y_output *= deadzone_factor
 
