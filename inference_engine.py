@@ -12,6 +12,18 @@ import traceback
 import shutil
 
 
+def _add_local_dll_dir():
+    """将项目 dll/ 目录添加到 DLL 搜索路径，确保加载正确版本的 nvinfer。"""
+    dll_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dll')
+    if os.path.isdir(dll_dir):
+        os.add_dll_directory(dll_dir)
+        # 同时前置到 PATH，兼容旧版 ctypes 加载逻辑
+        os.environ['PATH'] = dll_dir + ';' + os.environ.get('PATH', '')
+
+
+_add_local_dll_dir()
+
+
 def _import_cuda_driver():
     """导入 CUDA driver，优先 pycuda，回退到 cuda_compat 兼容层。"""
     try:
@@ -66,7 +78,7 @@ class TensorRTInferenceEngine:
                 if not os.path.exists(onnx_path):
                     raise RuntimeError(f'找不到对应的onnx文件: {onnx_path}')
                 import subprocess
-                cmd = f'"{_find_trtexec()}" --onnx="{onnx_path}" --saveEngine="{engine_path}"'
+                cmd = f'"{_find_trtexec()}" --onnx="{onnx_path}" --saveEngine="{engine_path}" --fp16'
                 process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                            encoding='utf-8')
                 for line in process.stdout:
