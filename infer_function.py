@@ -319,6 +319,12 @@ def nms(pred, confidence_threshold, iou_threshold, class_num):
 
 def read_img(img_data, size=(320, 320)):
     target_w, target_h = size
+    h, w = img_data.shape[:2]
+    if h == target_h and w == target_w:
+        # 截屏尺寸==模型尺寸，跳过 resize，直接 BGR→RGB + normalize + CHW
+        blob = np.ascontiguousarray(img_data[:, :, ::-1].transpose(2, 0, 1), dtype=np.float32)
+        blob *= NORMALIZE_FACTOR
+        return blob.reshape(1, 3, target_h, target_w)
     if NUMBA_AVAILABLE and target_w == 640 and (target_h == 640):
         try:
             normalized_img = numba_resize_and_normalize(img_data, target_h, target_w)
