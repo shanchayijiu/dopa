@@ -1649,8 +1649,12 @@ class Valorant:
         y2 = min(h, y1 + roi_h)
         roi = frame[y1:y2, x1:x2]
 
-        roi_blur = cv2.GaussianBlur(roi, (3, 3), 0)
-        hsv = cv2.cvtColor(roi_blur, cv2.COLOR_BGR2HSV)
+        # 极小 ROI 时跳过高斯模糊，避免准星边缘被吃掉
+        if roi_w <= 30 or roi_h <= 30:
+            hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        else:
+            roi_blur = cv2.GaussianBlur(roi, (3, 3), 0)
+            hsv = cv2.cvtColor(roi_blur, cv2.COLOR_BGR2HSV)
 
         hsv_ranges = cfg.get('hsv_ranges', [])
         mask = None
@@ -1658,27 +1662,54 @@ class Valorant:
         show_active_only = cfg.get('show_active_only', False)
         active_index = int(cfg.get('active_index', 0))
 
-        # 缓存本帧 normalize 结果，避免 raw fallback 时重复计算
+        # 缓存 HSV 范围的 normalize 结果和 np.array 边界，仅配置变化时重建
+        _ranges_sig = tuple(
+            (r.get('h_min'), r.get('h_max'), r.get('s_min'), r.get('s_max'), r.get('v_min'), r.get('v_max'))
+            for r in hsv_ranges if isinstance(r, dict)
+        )
+        _cache_key = (_ranges_sig, show_active_only, active_index)
+        if getattr(self, '_hsv_bounds_cache_key', None) != _cache_key:
+            bounds = []
+            for i, hsv_range in enumerate(hsv_ranges):
+                if show_active_only and i != active_index:
+                    bounds.append(None)
+                    continue
+                nr = self._normalize_hsv_range(hsv_range)
+                h_min, h_max = nr['h_min'], nr['h_max']
+                s_min, s_max = nr['s_min'], nr['s_max']
+                v_min, v_max = nr['v_min'], nr['v_max']
+                if h_min > h_max:
+                    bounds.append((
+                        nr,
+                        np.array([h_min, s_min, v_min], dtype=np.uint8),
+                        np.array([179, s_max, v_max], dtype=np.uint8),
+                        np.array([0, s_min, v_min], dtype=np.uint8),
+                        np.array([h_max, s_max, v_max], dtype=np.uint8),
+                    ))
+                else:
+                    bounds.append((
+                        nr,
+                        np.array([h_min, s_min, v_min], dtype=np.uint8),
+                        np.array([h_max, s_max, v_max], dtype=np.uint8),
+                        None, None,
+                    ))
+            self._hsv_bounds_cache = bounds
+            self._hsv_bounds_cache_key = _cache_key
+        cached_bounds = self._hsv_bounds_cache
+
         normalized_ranges = []
-        for i, hsv_range in enumerate(hsv_ranges):
-            if show_active_only and i != active_index:
+        for entry in cached_bounds:
+            if entry is None:
                 normalized_ranges.append(None)
                 continue
-            normalized = self._normalize_hsv_range(hsv_range)
-            normalized_ranges.append(normalized)
-            h_min, h_max = normalized['h_min'], normalized['h_max']
-            s_min, s_max = normalized['s_min'], normalized['s_max']
-            v_min, v_max = normalized['v_min'], normalized['v_max']
-            
-            if h_min > h_max:
-                mask1 = cv2.inRange(hsv, np.array([h_min, s_min, v_min], dtype=np.uint8),
-                                         np.array([179, s_max, v_max], dtype=np.uint8))
-                mask2 = cv2.inRange(hsv, np.array([0, s_min, v_min], dtype=np.uint8),
-                                         np.array([h_max, s_max, v_max], dtype=np.uint8))
+            nr, lo1, hi1, lo2, hi2 = entry
+            normalized_ranges.append(nr)
+            if lo2 is not None:
+                mask1 = cv2.inRange(hsv, lo1, hi1)
+                mask2 = cv2.inRange(hsv, lo2, hi2)
                 current_mask = cv2.bitwise_or(mask1, mask2)
             else:
-                current_mask = cv2.inRange(hsv, np.array([h_min, s_min, v_min], dtype=np.uint8),
-                                                np.array([h_max, s_max, v_max], dtype=np.uint8))
+                current_mask = cv2.inRange(hsv, lo1, hi1)
             mask = current_mask if mask is None else cv2.bitwise_or(mask, current_mask)
         
         # 自适应形态学（带迟滞，防止阈值附近模式跳变）
@@ -1699,21 +1730,16 @@ class Valorant:
                 if pixel_count < small_pixel_thresh // 3:
                     hsv_raw = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
                     mask_raw = None
-                    for i, nr in enumerate(normalized_ranges):
-                        if nr is None:
+                    for entry in cached_bounds:
+                        if entry is None:
                             continue
-                        hmi, hma = nr['h_min'], nr['h_max']
-                        smi, sma = nr['s_min'], nr['s_max']
-                        vmi, vma = nr['v_min'], nr['v_max']
-                        if hmi > hma:
-                            m1 = cv2.inRange(hsv_raw, np.array([hmi, smi, vmi], dtype=np.uint8),
-                                                      np.array([179, sma, vma], dtype=np.uint8))
-                            m2 = cv2.inRange(hsv_raw, np.array([0, smi, vmi], dtype=np.uint8),
-                                                      np.array([hma, sma, vma], dtype=np.uint8))
+                        _, lo1, hi1, lo2, hi2 = entry
+                        if lo2 is not None:
+                            m1 = cv2.inRange(hsv_raw, lo1, hi1)
+                            m2 = cv2.inRange(hsv_raw, lo2, hi2)
                             cm = cv2.bitwise_or(m1, m2)
                         else:
-                            cm = cv2.inRange(hsv_raw, np.array([hmi, smi, vmi], dtype=np.uint8),
-                                                      np.array([hma, sma, vma], dtype=np.uint8))
+                            cm = cv2.inRange(hsv_raw, lo1, hi1)
                         mask_raw = cm if mask_raw is None else cv2.bitwise_or(mask_raw, cm)
                     if mask_raw is not None:
                         mask_raw = cv2.dilate(mask_raw, self._morph_kernel_dilate_small, iterations=1)
@@ -1980,26 +2006,31 @@ class Valorant:
             return
         self._crosshair_pull_consumed_seq = seq
         dx, dy = self.crosshair_offset
-        try:
-            pull_deadzone = float(crosshair_cfg.get('pull_deadzone', self.pressed_key_config.get('move_deadzone', 1.0)))
-        except Exception:
-            pull_deadzone = 1.0
-        if abs(dx) <= pull_deadzone and abs(dy) <= pull_deadzone:
-            return
-        try:
-            pull_k = float(crosshair_cfg.get('pull_k', 0.12))
-        except Exception:
-            pull_k = 0.12
-        try:
-            max_speed = float(crosshair_cfg.get('pull_max_speed', 6.0))
-        except Exception:
-            max_speed = 6.0
+        # 缓存回拉参数，避免每次 dict 查找 + try/except
+        pull_params = getattr(self, '_cached_pull_params', None)
+        if pull_params is None or getattr(self, '_cached_pull_cfg_id', None) != id(crosshair_cfg):
+            try:
+                _deadzone = float(crosshair_cfg.get('pull_deadzone', self.pressed_key_config.get('move_deadzone', 1.0)))
+            except Exception:
+                _deadzone = 1.0
+            try:
+                _k = float(crosshair_cfg.get('pull_k', 0.12))
+            except Exception:
+                _k = 0.12
+            try:
+                _max_spd = float(crosshair_cfg.get('pull_max_speed', 6.0))
+            except Exception:
+                _max_spd = 6.0
+            pull_params = (_deadzone, _k, _max_spd)
+            self._cached_pull_params = pull_params
+            self._cached_pull_cfg_id = id(crosshair_cfg)
+        pull_deadzone, pull_k, max_speed = pull_params
         if max_speed <= 0:
             return
-        relative_move_x = dx * pull_k
-        relative_move_y = dy * pull_k
-        relative_move_x = max(-max_speed, min(max_speed, relative_move_x))
-        relative_move_y = max(-max_speed, min(max_speed, relative_move_y))
+        if abs(dx) <= pull_deadzone and abs(dy) <= pull_deadzone:
+            return
+        relative_move_x = max(-max_speed, min(max_speed, dx * pull_k))
+        relative_move_y = max(-max_speed, min(max_speed, dy * pull_k))
         if abs(relative_move_x) > pull_deadzone or abs(relative_move_y) > pull_deadzone:
             self.execute_move(relative_move_x, relative_move_y)
 
