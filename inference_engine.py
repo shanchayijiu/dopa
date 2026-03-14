@@ -78,7 +78,7 @@ class TensorRTInferenceEngine:
                 if not os.path.exists(onnx_path):
                     raise RuntimeError(f'找不到对应的onnx文件: {onnx_path}')
                 import subprocess
-                cmd = f'"{_find_trtexec()}" --onnx="{onnx_path}" --saveEngine="{engine_path}"'
+                cmd = f'"{_find_trtexec()}" --onnx="{onnx_path}" --saveEngine="{engine_path}" --fp16'
                 process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                            encoding='utf-8')
                 for line in process.stdout:
