@@ -1109,6 +1109,15 @@ class AimPipeline:
 
     def _compute_pid_move_locked(self, error_x, error_y, pressed_key_config, auto_y=False, left_pressed_long=False):
         """PID计算 + 量化移动量（内部方法，调用时已持有锁）"""
+        # 延迟补偿：当前帧在上一帧PID输出移动鼠标之前截取，
+        # 因此观测误差比真实误差偏大。扣除上一帧输出以逼近真实误差。
+        prev_x, prev_y = self._prev_pid_raw
+        if prev_x != 0.0 or prev_y != 0.0:
+            comp_x = error_x - prev_x
+            comp_y = error_y - prev_y
+            # 防止补偿翻转误差方向（过补偿）
+            error_x = comp_x if error_x * comp_x > 0 else 0.0
+            error_y = comp_y if error_y * comp_y > 0 else 0.0
         relative_move_x, relative_move_y = self.pid.compute(error_x, error_y)
         self._prev_pid_raw = (relative_move_x, relative_move_y)
         if auto_y and left_pressed_long:
