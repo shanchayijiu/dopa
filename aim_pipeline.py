@@ -266,13 +266,13 @@ class AimPipeline:
         self._lead_x = 0.0
         self._lead_y = 0.0
         self._lead_smooth = 0.18  # lead EMA 系数
-        # 自维护速度估计（补偿自身鼠标运动）
+        # 速度估计（纯观测，不补偿 PID）
         self._prev_aim_pos = None       # 上一帧目标屏幕坐标
         self._prev_aim_time = None      # 上一帧时间戳
-        self._prev_pid_only = (0.0, 0.0)  # 上一帧 PID 输出（不含 lead，用于速度补偿）
-        self._est_vx = 0.0  # 补偿后的速度估计 (像素/秒)
+        self._est_vx = 0.0  # 观测速度估计 (像素/秒)
         self._est_vy = 0.0
-        self._vel_smooth = 0.25  # 速度 EMA 系数
+        self._vel_smooth = 0.15  # 速度 EMA 系数（保守，滤除 PID 干扰）
+        self._vel_dir_count = 0  # 连续同向帧数
         # 目标ID强锁定
         self.target_id_lock_enabled = True
         self._locked_track_id = None
@@ -299,9 +299,9 @@ class AimPipeline:
             self._lead_y = 0.0
             self._prev_aim_pos = None
             self._prev_aim_time = None
-            self._prev_pid_only = (0.0, 0.0)
             self._est_vx = 0.0
             self._est_vy = 0.0
+            self._vel_dir_count = 0
             self._cache['aim'].clear()
             self._cache['pid'].clear()
 
@@ -994,11 +994,11 @@ class AimPipeline:
                 self._last_output_target_pos = None
                 self._prev_aim_pos = None
                 self._prev_aim_time = None
-                self._prev_pid_only = (0.0, 0.0)
                 self._est_vx = 0.0
                 self._est_vy = 0.0
                 self._lead_x = 0.0
                 self._lead_y = 0.0
+                self._vel_dir_count = 0
                 return None
             target_id = nearest.get('id')
             aim_x = float(nearest['pos'][0])
@@ -1012,11 +1012,11 @@ class AimPipeline:
                 self._est_vy = 0.0
                 self._lead_x = 0.0
                 self._lead_y = 0.0
+                self._vel_dir_count = 0
 
-            # ---- 移动预测：前馈偏移（补偿自身鼠标运动的速度估计） ----
-            # 原理：观测位移 = 真实目标位移 - 我们 PID 鼠标移动造成的画面偏移
-            # 所以：真实速度 ≈ (观测位移 + 上一帧 PID 输出) / dt
-            # 注意：仅用 PID 输出补偿，不含 lead，否则 lead 自我放大形成正反馈
+            # ---- 移动预测：纯观测速度 + 方向一致性过滤 ----
+            # 不补偿 PID 输出（PID→鼠标→屏幕的映射未知，补偿产生幻影速度→震荡）
+            # 用原始观测速度的 EMA，依赖方向一致性过滤来区分真实运动和 PID 抖动
             lead_ff_x = 0.0
             lead_ff_y = 0.0
             now = time.time()
@@ -1026,24 +1026,29 @@ class AimPipeline:
                     if 0.001 < dt < 0.5:
                         obs_dx = aim_x - self._prev_aim_pos[0]
                         obs_dy = aim_y - self._prev_aim_pos[1]
-                        comp_dx = (obs_dx + self._prev_pid_only[0]) / dt
-                        comp_dy = (obs_dy + self._prev_pid_only[1]) / dt
-                        # Clamp to prevent spikes from detection jitter
+                        raw_vx = obs_dx / dt
+                        raw_vy = obs_dy / dt
+                        # Clamp spikes
                         max_vel = 2000.0
-                        comp_dx = max(-max_vel, min(max_vel, comp_dx))
-                        comp_dy = max(-max_vel, min(max_vel, comp_dy))
+                        raw_vx = max(-max_vel, min(max_vel, raw_vx))
+                        raw_vy = max(-max_vel, min(max_vel, raw_vy))
                         va = self._vel_smooth
-                        self._est_vx = va * comp_dx + (1.0 - va) * self._est_vx
-                        self._est_vy = va * comp_dy + (1.0 - va) * self._est_vy
+                        self._est_vx = va * raw_vx + (1.0 - va) * self._est_vx
+                        self._est_vy = va * raw_vy + (1.0 - va) * self._est_vy
+                        # Direction consistency: raw velocity same sign as EMA = real movement
+                        if (raw_vx * self._est_vx + raw_vy * self._est_vy) > 0:
+                            self._vel_dir_count = min(self._vel_dir_count + 1, 30)
+                        else:
+                            self._vel_dir_count = max(self._vel_dir_count - 2, 0)
 
                 vel_mag = math.sqrt(self._est_vx * self._est_vx + self._est_vy * self._est_vy)
-                # 死区：低于 50 像素/秒 视为静止/抖动
-                if vel_mag > 50.0:
+                # Activate lead only when: speed > 80 px/s AND consistent direction for 4+ frames
+                if vel_mag > 80.0 and self._vel_dir_count >= 4:
                     lead_time = float(self.kalman_predict_frames) * 0.008
                     raw_lx = self._est_vx * lead_time
                     raw_ly = self._est_vy * lead_time
                     lead_mag = math.sqrt(raw_lx * raw_lx + raw_ly * raw_ly)
-                    max_lead = 50.0
+                    max_lead = 40.0
                     if lead_mag > max_lead:
                         s = max_lead / lead_mag
                         raw_lx *= s
@@ -1054,8 +1059,8 @@ class AimPipeline:
                     lead_ff_x = self._lead_x
                     lead_ff_y = self._lead_y
                 else:
-                    self._lead_x *= 0.7
-                    self._lead_y *= 0.7
+                    self._lead_x *= 0.5
+                    self._lead_y *= 0.5
 
                 self._prev_aim_pos = (aim_x, aim_y)
                 self._prev_aim_time = now
@@ -1068,14 +1073,9 @@ class AimPipeline:
             error_y = aim_y - float(cy)
             pid_result = self._compute_pid_move_locked(error_x, error_y, pressed_key_config, auto_y=auto_y, left_pressed_long=left_pressed_long)
 
-            # 记录 PID-only 输出（不含 lead）用于下一帧速度补偿
             if pid_result is not None:
-                self._prev_pid_only = (float(pid_result[0]), float(pid_result[1]))
-                # 将 lead 前馈叠加到最终输出
                 if abs(lead_ff_x) > 0.1 or abs(lead_ff_y) > 0.1:
                     pid_result = (pid_result[0] + lead_ff_x, pid_result[1] + lead_ff_y)
-            else:
-                self._prev_pid_only = (0.0, 0.0)
             return pid_result
 
     def step_frame(self, frame_payload, pressed_key_config, cfg, center_xy, aim_scope, identify_left, identify_top, model_area, auto_y=False, left_pressed_long=False, debug=False):
