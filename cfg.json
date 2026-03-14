@@ -423,7 +423,7 @@
             "model_variant": "v8onnx"
         },
         "sjz": {
-            "infer_model": "C:/Users/Administrator/Desktop/models/sjz320v8.onnx",
+            "infer_model": "C:/Users/Administrator/Desktop/dopa/models/sjz320v8.engine",
             "auto_y": true,
             "long_press_duration": 0,
             "right_down": false,
@@ -780,9 +780,9 @@
                 }
             },
             "is_v8": true,
-            "is_trt": false,
+            "is_trt": true,
             "original_infer_model": "C:/Users/Administrator/Desktop/models/sjz320v8.onnx",
-            "model_variant": "v8onnx"
+            "model_variant": "tensorrt_engine"
         }
     },
     "games": {
