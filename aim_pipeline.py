@@ -1136,12 +1136,22 @@ class AimPipeline:
 
     def _compute_pid_move_locked(self, error_x, error_y, pressed_key_config, auto_y=False, left_pressed_long=False):
         """PID计算 + 量化移动量（内部方法，调用时已持有锁）"""
+        # ---- 到达死区：误差极小时停止移动并清理累积状态，防止近距离震荡 ----
+        error_mag = _sqrt(error_x * error_x + error_y * error_y)
+        if error_mag < 0.5:
+            self._prev_pid_raw = (0.0, 0.0)
+            self.quantizer.reset()
+            self.pid._i_term['x'] = 0.0
+            self.pid._i_term['y'] = 0.0
+            return None
         # 延迟补偿：当前帧在上一帧PID输出移动鼠标之前截取，
         # 因此观测误差比真实误差偏大。扣除上一帧输出以逼近真实误差。
         prev_x, prev_y = self._prev_pid_raw
         if prev_x != 0.0 or prev_y != 0.0:
-            comp_x = error_x - prev_x
-            comp_y = error_y - prev_y
+            # 近距离降低补偿强度，防止过补偿导致震荡
+            comp_scale = min(1.0, error_mag / 5.0)
+            comp_x = error_x - prev_x * comp_scale
+            comp_y = error_y - prev_y * comp_scale
             # 防止补偿翻转误差方向（过补偿）
             error_x = comp_x if error_x * comp_x > 0 else 0.0
             error_y = comp_y if error_y * comp_y > 0 else 0.0
@@ -1152,6 +1162,8 @@ class AimPipeline:
         move_threshold = float(pressed_key_config.get('move_deadzone', 1.0))
         if abs(relative_move_x) > move_threshold or abs(relative_move_y) > move_threshold:
             return self.quantizer.quantize(relative_move_x, relative_move_y)
+        # 移动被抑制时清理量化器残差，防止累积跳变
+        self.quantizer.reset()
         return None
 
     def compute_pid_move(self, error_x, error_y, pressed_key_config, auto_y=False, left_pressed_long=False):
