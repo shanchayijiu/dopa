@@ -6085,7 +6085,13 @@ class Valorant:
         if not isinstance(cfg, dict):
             cfg = {}
             self.config['crosshair_color_lock'] = cfg
-        return self._ensure_crosshair_hsv_ranges(cfg)
+        if not getattr(self, '_crosshair_cfg_ensured', False):
+            self._ensure_crosshair_hsv_ranges(cfg)
+            self._crosshair_cfg_ensured = True
+        # only_when_aiming 可能被 GUI 设为 None，每次检查
+        if cfg.get('only_when_aiming') is None:
+            cfg['only_when_aiming'] = True
+        return cfg
 
     def _ensure_crosshair_hsv_ranges(self, cfg):
         cfg.setdefault('enabled', False)
@@ -6100,9 +6106,7 @@ class Valorant:
         cfg.setdefault('v_tolerance', 30)
         cfg.setdefault('ema_smooth', 0.4)
         cfg.setdefault('small_pixel_threshold', 150)
-        # only_when_aiming 可能被 GUI 设为 None，强制修正为 True
-        if cfg.get('only_when_aiming') is None:
-            cfg['only_when_aiming'] = True
+        cfg.setdefault('only_when_aiming', True)
         hsv_ranges = cfg.get('hsv_ranges')
         if not isinstance(hsv_ranges, list) or len(hsv_ranges) == 0:
             min_color = cfg.get('min_color', [0, 0, 0])
