@@ -222,6 +222,7 @@ class Valorant:
         self.is_trt_checkbox = None
         self.press_timer = None
         self.auto_y_checkbox = None
+        self.use_crosshair_checkbox = None
         self.right_down_checkbox = None
         self.down_switch = False
         self.decimal_x = 0
@@ -1516,12 +1517,18 @@ class Valorant:
     def aim_bot_func(self, uTimerID, uMsg, dwUser, dw1, dw2):
         crosshair_cfg = self._get_crosshair_lock_config()
         crosshair_enabled = bool(crosshair_cfg.get('enabled'))
+        # 逐键准星找色开关：默认 True（兼容旧配置）
+        current_key = self.old_pressed_aim_key
+        key_use_crosshair = True
+        if current_key and current_key in self.aim_keys_dist:
+            key_use_crosshair = bool(self.aim_keys_dist[current_key].get('use_crosshair', True))
+        crosshair_active = crosshair_enabled and key_use_crosshair
         # 仅瞄准时启用逻辑
         only_when_aiming = bool(crosshair_cfg.get('only_when_aiming', True))
         
         if self.aim_key_status:
             desired_mode = 'aim'
-        elif crosshair_enabled and not only_when_aiming:
+        elif crosshair_active and not only_when_aiming:
             desired_mode = 'crosshair'
         else:
             desired_mode = 'idle'
@@ -1576,9 +1583,9 @@ class Valorant:
                 )
                 if move is not None:
                     self.execute_move(move[0], move[1])
-                elif crosshair_enabled and only_when_aiming:
+                elif crosshair_active and only_when_aiming:
                     self._try_crosshair_pull(crosshair_cfg)
-        elif crosshair_enabled and not only_when_aiming:
+        elif crosshair_active and not only_when_aiming:
             self._try_crosshair_pull(crosshair_cfg)
 
     def execute_move(self, relative_move_x, relative_move_y):
@@ -2936,6 +2943,9 @@ class Valorant:
                                 dpg.add_button(label='选择模型', callback=self.on_select_model_click, width=100)
                             with dpg.group(horizontal=True, parent=model_params_group):
                                 self.auto_y_checkbox = dpg.add_checkbox(label='长按左键不锁Y轴', callback=self.on_auto_y_change)
+                                self.use_crosshair_checkbox = dpg.add_checkbox(label='准星找色', default_value=True, callback=self.on_use_crosshair_change)
+                                with dpg.tooltip(self.use_crosshair_checkbox):
+                                    dpg.add_text('为当前按键启用/禁用准星找色回拉')
                                 self.long_press_duration_slider = dpg.add_slider_int(label='长按判断阈值', default_value=self.config['groups'][self.group]['long_press_duration'], min_value=100, max_value=5000, callback=self.on_long_press_duration_change, width=self.scaled_width_normal)
                             with dpg.group(horizontal=True, parent=model_params_group):
                                 self.target_switch_delay_slider = dpg.add_slider_int(label='目标转移延迟(ms)', default_value=0, min_value=0, max_value=2000, callback=self.on_target_switch_delay_change, width=self.scaled_width_normal)
@@ -4491,6 +4501,8 @@ class Valorant:
             self.update_rect()
             if self.auto_y_checkbox is not None:
                 dpg.set_value(self.auto_y_checkbox, self.config['groups'][self.group]['aim_keys'][self.select_key].get('auto_y', False))
+            if self.use_crosshair_checkbox is not None:
+                dpg.set_value(self.use_crosshair_checkbox, self.config['groups'][self.group]['aim_keys'][self.select_key].get('use_crosshair', True))
                 dpg.show_item(self.pid_params_group)
             key_cfg = self.config['groups'][self.group]['aim_keys'][self.select_key]
             dpg.set_value(self.pid_kp_x_slider, key_cfg.get('pid_kp_x', 0.4))
@@ -5145,6 +5157,11 @@ class Valorant:
         if len(self.aim_key) > 0:
             self.config['groups'][self.group]['aim_keys'][self.select_key]['auto_y'] = app_data
             print(f'按键 {self.select_key} 长按左键不锁Y轴设置已更改为: {app_data}')
+
+    def on_use_crosshair_change(self, sender, app_data):
+        if len(self.aim_key) > 0:
+            self.config['groups'][self.group]['aim_keys'][self.select_key]['use_crosshair'] = app_data
+            print(f'按键 {self.select_key} 准星找色已更改为: {app_data}')
 
     def on_right_down_change(self, sender, app_data):
         self.config['groups'][self.group]['right_down'] = app_data
@@ -6005,6 +6022,7 @@ class Valorant:
         aim_key_group.register_item('max_velocity_threshold', 'max_velocity_threshold', float)
         aim_key_group.register_item('compensation_factor', 'compensation_factor', float)
         aim_key_group.register_item('auto_y', 'auto_y', bool)
+        aim_key_group.register_item('use_crosshair', 'use_crosshair', bool)
         aim_key_group.register_item('pid_kp_x', 'pid_kp_x', float, self.refresh_controller_params)
         aim_key_group.register_item('pid_ki_x', 'pid_ki_x', float, self.refresh_controller_params)
         aim_key_group.register_item('pid_kd_x', 'pid_kd_x', float, self.refresh_controller_params)
