@@ -26,6 +26,7 @@ class KalmanPredictor2D:
         self._I4 = np.eye(4, dtype=np.float64)
         self._F_template = np.eye(4, dtype=np.float64)
         self._Q_template = np.zeros((4, 4), dtype=np.float64)
+        self._z_buf = np.empty(2, dtype=np.float64)
 
     @property
     def measurement_noise(self):
@@ -112,7 +113,8 @@ class KalmanPredictor2D:
         # Update
         H = self._get_H()
         R = self._get_R()
-        z = np.array([mx, my], dtype=np.float64)
+        z = self._z_buf
+        z[0] = mx; z[1] = my
         y_res = z - H @ x_pred
         S = H @ P_pred @ H.T + R
         try:
