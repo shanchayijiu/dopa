@@ -1014,11 +1014,9 @@ class AimPipeline:
                 self._lead_y = 0.0
                 self._vel_dir_count = 0
 
-            # ---- 移动预测：纯观测速度 + 方向一致性过滤 ----
-            # 不补偿 PID 输出（PID→鼠标→屏幕的映射未知，补偿产生幻影速度→震荡）
-            # 用原始观测速度的 EMA，依赖方向一致性过滤来区分真实运动和 PID 抖动
-            lead_ff_x = 0.0
-            lead_ff_y = 0.0
+            # ---- 移动预测：用预测位置替代原始位置喂给 PID ----
+            # 架构：预测偏移加在 PID 输入端（aim_x/y），而非 PID 输出端
+            # 这样 PID 跟踪的是预测点，不会与 lead 打架产生震荡
             now = time.time()
             if self.kalman_enabled and self.kalman_predict_frames > 0:
                 if self._prev_aim_pos is not None and self._prev_aim_time is not None:
@@ -1028,21 +1026,18 @@ class AimPipeline:
                         obs_dy = aim_y - self._prev_aim_pos[1]
                         raw_vx = obs_dx / dt
                         raw_vy = obs_dy / dt
-                        # Clamp spikes
                         max_vel = 2000.0
                         raw_vx = max(-max_vel, min(max_vel, raw_vx))
                         raw_vy = max(-max_vel, min(max_vel, raw_vy))
                         va = self._vel_smooth
                         self._est_vx = va * raw_vx + (1.0 - va) * self._est_vx
                         self._est_vy = va * raw_vy + (1.0 - va) * self._est_vy
-                        # Direction consistency: raw velocity same sign as EMA = real movement
                         if (raw_vx * self._est_vx + raw_vy * self._est_vy) > 0:
                             self._vel_dir_count = min(self._vel_dir_count + 1, 30)
                         else:
                             self._vel_dir_count = max(self._vel_dir_count - 2, 0)
 
                 vel_mag = math.sqrt(self._est_vx * self._est_vx + self._est_vy * self._est_vy)
-                # Activate lead only when: speed > 80 px/s AND consistent direction for 4+ frames
                 if vel_mag > 80.0 and self._vel_dir_count >= 4:
                     lead_time = float(self.kalman_predict_frames) * 0.008
                     raw_lx = self._est_vx * lead_time
@@ -1056,13 +1051,14 @@ class AimPipeline:
                     la = self._lead_smooth
                     self._lead_x = la * raw_lx + (1.0 - la) * self._lead_x
                     self._lead_y = la * raw_ly + (1.0 - la) * self._lead_y
-                    lead_ff_x = self._lead_x
-                    lead_ff_y = self._lead_y
                 else:
                     self._lead_x *= 0.5
                     self._lead_y *= 0.5
 
-                self._prev_aim_pos = (aim_x, aim_y)
+                # Apply lead to aim position BEFORE PID
+                aim_x += self._lead_x
+                aim_y += self._lead_y
+                self._prev_aim_pos = (aim_x - self._lead_x, aim_y - self._lead_y)
                 self._prev_aim_time = now
 
             nearest['pos'] = (aim_x, aim_y)
@@ -1072,10 +1068,6 @@ class AimPipeline:
             error_x = aim_x - float(cx)
             error_y = aim_y - float(cy)
             pid_result = self._compute_pid_move_locked(error_x, error_y, pressed_key_config, auto_y=auto_y, left_pressed_long=left_pressed_long)
-
-            if pid_result is not None:
-                if abs(lead_ff_x) > 0.1 or abs(lead_ff_y) > 0.1:
-                    pid_result = (pid_result[0] + lead_ff_x, pid_result[1] + lead_ff_y)
             return pid_result
 
     def step_frame(self, frame_payload, pressed_key_config, cfg, center_xy, aim_scope, identify_left, identify_top, model_area, auto_y=False, left_pressed_long=False, debug=False):
