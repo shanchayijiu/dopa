@@ -43,7 +43,7 @@ class KalmanPredictor2D:
     def _init_state(self, x, y):
         """初始化单个 track 的卡尔曼状态"""
         state = np.array([x, y, 0.0, 0.0], dtype=np.float64)
-        P = np.diag([100.0, 100.0, 500.0, 500.0]).astype(np.float64)
+        P = np.diag([100.0, 100.0, 500.0, 500.0])
         return state, P
 
     def _get_F(self, dt):
