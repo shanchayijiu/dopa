@@ -72,6 +72,9 @@ class CrosshairTracker:
         # ── 配置初始化标记 ──
         self._cfg_ensured = False
 
+        # ── lock_box 平滑 ──
+        self._box_ema = None  # (x1, y1, x2, y2) float
+
     # ────────────────────────────────────────────
     #  配置管理
     # ────────────────────────────────────────────
@@ -177,6 +180,7 @@ class CrosshairTracker:
             self._mask_accum_count = 0
             self._miss_count = 0
             self._small_mode = False
+            self._box_ema = None
             return
 
         h, w = frame.shape[:2]
@@ -199,15 +203,20 @@ class CrosshairTracker:
         hsv_ranges = cfg.get('hsv_ranges', [])
         show_active_only = cfg.get('show_active_only', False)
         active_index = int(cfg.get('active_index', 0))
+        h_tol = int(cfg.get('h_tolerance', 10))
+        s_tol = int(cfg.get('s_tolerance', 30))
+        v_tol = int(cfg.get('v_tolerance', 30))
 
         ranges_sig = tuple(
             (r.get('h_min'), r.get('h_max'), r.get('s_min'),
-             r.get('s_max'), r.get('v_min'), r.get('v_max'))
+             r.get('s_max'), r.get('v_min'), r.get('v_max'),
+             r.get('h_center'), r.get('s_center'), r.get('v_center'))
             for r in hsv_ranges if isinstance(r, dict)
         )
-        cache_key = (ranges_sig, show_active_only, active_index)
+        cache_key = (ranges_sig, show_active_only, active_index, h_tol, s_tol, v_tol)
         if self._bounds_cache_key != cache_key:
-            self._bounds_cache = self._build_bounds(hsv_ranges, show_active_only, active_index)
+            self._bounds_cache = self._build_bounds(
+                hsv_ranges, show_active_only, active_index, h_tol, s_tol, v_tol)
             self._bounds_cache_key = cache_key
         cached = self._bounds_cache
 
@@ -230,10 +239,20 @@ class CrosshairTracker:
             self._last_pixel_count = pixel_count
             small_thresh = int(cfg.get('small_pixel_threshold', 150))
 
-            if self._small_mode:
-                is_small = pixel_count <= int(small_thresh * 1.4)
+            # Use center-region pixel count for small_mode determination.
+            # Prevents background noise at ROI edges (common with green)
+            # from inflating the count and incorrectly exiting small_mode.
+            mh, mw = mask.shape[:2]
+            mx, my = max(1, mw // 4), max(1, mh // 4)
+            if mw > 4 and mh > 4:
+                center_count = cv2.countNonZero(mask[my:mh - my, mx:mw - mx])
             else:
-                is_small = pixel_count <= small_thresh
+                center_count = pixel_count
+
+            if self._small_mode:
+                is_small = center_count <= int(small_thresh * 1.4)
+            else:
+                is_small = center_count <= small_thresh
             self._small_mode = is_small
 
             if is_small:
@@ -264,9 +283,19 @@ class CrosshairTracker:
                     self._mask_accum = mask.copy()
                 self._mask_accum_count += 1
             else:
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kern_open, iterations=1)
+                # Density-adaptive morphology: when many pixels match
+                # (e.g. green range hitting environment), use stronger opening
+                density = pixel_count / max(1, mw * mh)
+                open_iter = 2 if density > 0.15 else 1
+                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kern_open, iterations=open_iter)
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kern_close, iterations=1)
-                self._mask_accum = None
+                # Lightweight temporal smoothing to stabilize mask across frames
+                if self._mask_accum is not None and self._mask_accum.shape == mask.shape:
+                    self._mask_accum = cv2.addWeighted(self._mask_accum, 0.3, mask, 0.7, 0)
+                    _, mc = cv2.threshold(self._mask_accum, 100, 255, cv2.THRESH_BINARY)
+                    mask = mc
+                else:
+                    self._mask_accum = mask.copy()
                 self._mask_accum_count = 0
 
         # ── 调试日志 ──
@@ -305,11 +334,11 @@ class CrosshairTracker:
             if should_log:
                 print("准星找色: 未找到轮廓 (匹配像素可能太少)")
             self._miss_count += 1
-            if self._miss_count >= 3:
+            if self._miss_count >= 5:
                 self._decay(cfg)
             return
 
-        min_area = float(cfg.get('min_area', 1.0))
+        min_area = max(1.0, float(cfg.get('min_area', 1.0)))
         max_area = float(cfg.get('max_area', 1000.0))
         actual_w = x2 - x1
         actual_h = y2 - y1
@@ -330,7 +359,7 @@ class CrosshairTracker:
             if should_log:
                 print("准星找色: 没有符合条件的轮廓")
             self._miss_count += 1
-            if self._miss_count >= 3:
+            if self._miss_count >= 5:
                 self._decay(cfg)
             return
 
@@ -348,7 +377,21 @@ class CrosshairTracker:
         self._prev_target = (cx_roi, cy_roi)
 
         box = (x1 + bx, y1 + by, x1 + bx + bw, y1 + by + bh)
-        self.lock_box = box
+        # Smooth lock_box with EMA to prevent ±1 pixel jitter
+        box_alpha = 0.35
+        if self._box_ema is None:
+            self._box_ema = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+        else:
+            self._box_ema = (
+                self._box_ema[0] + box_alpha * (box[0] - self._box_ema[0]),
+                self._box_ema[1] + box_alpha * (box[1] - self._box_ema[1]),
+                self._box_ema[2] + box_alpha * (box[2] - self._box_ema[2]),
+                self._box_ema[3] + box_alpha * (box[3] - self._box_ema[3]),
+            )
+        self.lock_box = (
+            int(round(self._box_ema[0])), int(round(self._box_ema[1])),
+            int(round(self._box_ema[2])), int(round(self._box_ema[3])),
+        )
         cross_x = x1 + cx_roi
         cross_y = y1 + cy_roi
 
@@ -408,6 +451,7 @@ class CrosshairTracker:
         else:
             self.offset = (0.0, 0.0)
         self.lock_box = None
+        self._box_ema = None
 
     def try_pull(self, cfg, fallback_deadzone=1.0):
         """计算回拉移动量，返回 (dx, dy) 或 None（不直接操作鼠标）"""
@@ -489,7 +533,8 @@ class CrosshairTracker:
 
         new_range = {'h_min': h_min, 'h_max': h_max,
                      's_min': s_min, 's_max': s_max,
-                     'v_min': v_min, 'v_max': v_max}
+                     'v_min': v_min, 'v_max': v_max,
+                     'h_center': h_val, 's_center': s_val, 'v_center': v_val}
         return new_range, (r, g, b), (h_val, s_val, v_val)
 
     def reset(self):
@@ -500,6 +545,7 @@ class CrosshairTracker:
         self._ema_x = 0.0
         self._ema_y = 0.0
         self._ema_initialized = False
+        self._box_ema = None
         self._prev_target = None
         self._mask_accum = None
         self._mask_accum_count = 0
@@ -510,19 +556,39 @@ class CrosshairTracker:
     #  内部方法
     # ────────────────────────────────────────────
 
-    def _build_bounds(self, hsv_ranges, show_active_only, active_index):
+    def _build_bounds(self, hsv_ranges, show_active_only, active_index,
+                      h_tol=10, s_tol=30, v_tol=30):
         bounds = []
         for i, hr in enumerate(hsv_ranges):
             if show_active_only and i != active_index:
                 bounds.append(None)
                 continue
-            nr = self.normalize_hsv_range(hr)
-            h_lo, h_hi = nr['h_min'], nr['h_max']
-            s_lo, s_hi = nr['s_min'], nr['s_max']
-            v_lo, v_hi = nr['v_min'], nr['v_max']
+            # Recompute from center values if available, so tolerance
+            # changes take effect without re-picking color
+            if 'h_center' in hr:
+                hc = int(hr['h_center'])
+                sc = int(hr['s_center'])
+                vc = int(hr['v_center'])
+                h_lo = hc - h_tol
+                h_hi = hc + h_tol
+                if h_lo < 0:
+                    h_lo += 180
+                if h_hi > 179:
+                    h_hi -= 180
+                s_lo = max(0, sc - s_tol)
+                s_hi = min(255, sc + s_tol)
+                v_lo = max(0, vc - v_tol)
+                v_hi = min(255, vc + v_tol)
+            else:
+                nr = self.normalize_hsv_range(hr)
+                h_lo, h_hi = nr['h_min'], nr['h_max']
+                s_lo, s_hi = nr['s_min'], nr['s_max']
+                v_lo, v_hi = nr['v_min'], nr['v_max']
+            # Saturation floor: reject gray/near-gray noise pixels
+            s_lo = max(s_lo, 30)
             if h_lo > h_hi:
                 bounds.append((
-                    nr,
+                    hr,
                     np.array([h_lo, s_lo, v_lo], dtype=np.uint8),
                     np.array([179, s_hi, v_hi], dtype=np.uint8),
                     np.array([0, s_lo, v_lo], dtype=np.uint8),
@@ -530,7 +596,7 @@ class CrosshairTracker:
                 ))
             else:
                 bounds.append((
-                    nr,
+                    hr,
                     np.array([h_lo, s_lo, v_lo], dtype=np.uint8),
                     np.array([h_hi, s_hi, v_hi], dtype=np.uint8),
                     None, None,
@@ -540,6 +606,8 @@ class CrosshairTracker:
     @staticmethod
     def _filter_contours(contours, min_area, max_area, is_small, roi_cx, roi_cy):
         valid = []
+        # Crosshair is always near ROI center; reject contours in outer 30%
+        max_cdist_sq = (roi_cx * 0.7) ** 2 + (roi_cy * 0.7) ** 2
         for cnt in contours:
             bx, by, bw, bh = cv2.boundingRect(cnt)
             rect_area = bw * bh
@@ -564,6 +632,8 @@ class CrosshairTracker:
                 cX = bx + bw / 2.0
                 cY = by + bh / 2.0
             dist_sq = (cX - roi_cx) ** 2 + (cY - roi_cy) ** 2
+            if dist_sq > max_cdist_sq:
+                continue
             valid.append((cnt, dist_sq, area, (bx, by, bw, bh), (cX, cY), 0.0))
         return valid
 
@@ -618,7 +688,7 @@ class CrosshairTracker:
     def _score_contours(valid, max_dist_sq, prev_target, roi_size):
         sticky_sq = 0.0
         if prev_target is not None:
-            sticky_sq = (roi_size * 0.15) ** 2
+            sticky_sq = (roi_size * 0.25) ** 2
 
         area_vals = [c[2] for c in valid]
         max_a = max(max(area_vals), 1.0)
@@ -630,7 +700,9 @@ class CrosshairTracker:
             if prev_target is not None:
                 dp = (center[0] - prev_target[0]) ** 2 + (center[1] - prev_target[1]) ** 2
                 if dp < sticky_sq:
-                    score *= 0.5
+                    # Proportional stickiness: closer to prev = stronger bonus
+                    proximity = 1.0 - dp / sticky_sq
+                    score *= max(0.25, 1.0 - proximity * 0.75)
             if score < best_score:
                 best_score = score
                 best_idx = idx

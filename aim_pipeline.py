@@ -265,18 +265,22 @@ class AimPipeline:
         # 移动预测平滑状态
         self._lead_x = 0.0
         self._lead_y = 0.0
-        self._lead_smooth = 0.06  # lead EMA 系数
-        # 自维护速度估计（补偿自身鼠标运动）
-        self._prev_aim_pos = None       # 上一帧目标屏幕坐标
-        self._prev_pid_output = (0.0, 0.0)  # 上一帧 PID 输出
-        self._est_vx = 0.0  # 补偿后的速度估计 (像素/帧)
+        self._lead_smooth = 0.18  # lead EMA 系数
+        # 速度估计（用 PID 输出补偿屏幕速度）
+        self._prev_aim_pos = None       # 上一帧目标屏幕坐标（原始，不含 lead）
+        self._prev_aim_time = None      # 上一帧时间戳
+        self._est_vx = 0.0  # 补偿后速度估计 (像素/秒)
         self._est_vy = 0.0
-        self._vel_smooth = 0.08  # 速度 EMA 系数
+        self._vel_smooth = 0.25  # 速度 EMA 系数（提高灵敏度）
+        self._vel_dir_count = 0  # 连续同向帧数
+        self._prev_pid_raw = (0.0, 0.0)  # 上一帧原始 PID 输出（补偿观测速度用）
+        self.predict_gain = 3.0  # PID输出→屏幕像素的估计系数
         # 目标ID强锁定
         self.target_id_lock_enabled = True
         self._locked_track_id = None
+        self._locked_last_pos = None      # 锁定目标最后已知位置
         self._lock_grace_frames = 0       # 锁定目标消失后的宽限帧计数
-        self._lock_grace_max = 5          # 最大宽限帧数（目标消失N帧内保持锁定）
+        self._lock_grace_max = 8          # 最大宽限帧数（~50-130ms）
 
     def reset(self):
         with self._infer_lock:
@@ -291,13 +295,16 @@ class AimPipeline:
             self.tracker.reset()
             self.kalman.reset()
             self._locked_track_id = None
+            self._locked_last_pos = None
             self._lock_grace_frames = 0
             self._lead_x = 0.0
             self._lead_y = 0.0
             self._prev_aim_pos = None
-            self._prev_pid_output = (0.0, 0.0)
+            self._prev_aim_time = None
             self._est_vx = 0.0
             self._est_vy = 0.0
+            self._vel_dir_count = 0
+            self._prev_pid_raw = (0.0, 0.0)
             self._cache['aim'].clear()
             self._cache['pid'].clear()
 
@@ -315,6 +322,7 @@ class AimPipeline:
             self._aim_position_cache.clear()
             self._target_lock_time = 0.0
             self._locked_track_id = None
+            self._locked_last_pos = None
             self._lock_grace_frames = 0
 
     def _prune_aim_position_cache(self):
@@ -346,6 +354,10 @@ class AimPipeline:
     def _reset_pid_integral(self):
         self.pid._i_term['x'] = 0
         self.pid._i_term['y'] = 0
+
+    def _reset_pid_full(self):
+        """完整重置 PID 状态（目标切换时调用，防止旧状态污染新目标）"""
+        self.pid.reset()
 
     def _coerce_boxes(self, boxes):
         if boxes is None:
@@ -489,6 +501,11 @@ class AimPipeline:
             kalman_measurement_noise = float(kalman_cfg.get('measurement_noise', 15.0))
         except Exception:
             kalman_measurement_noise = 15.0
+        try:
+            predict_gain = float(kalman_cfg.get('predict_gain', 3.0))
+        except Exception:
+            predict_gain = 3.0
+        predict_gain = max(0.0, min(20.0, predict_gain))
 
         # 目标ID强锁定
         target_id_lock_enabled = bool(cfg.get('target_id_lock_enabled', True))
@@ -514,6 +531,7 @@ class AimPipeline:
             kalman_predict_frames,
             kalman_process_noise,
             kalman_measurement_noise,
+            predict_gain,
             target_id_lock_enabled,
         )
         if c.get('key') != key:
@@ -538,10 +556,12 @@ class AimPipeline:
             c['kalman_predict_frames'] = kalman_predict_frames
             c['kalman_process_noise'] = kalman_process_noise
             c['kalman_measurement_noise'] = kalman_measurement_noise
+            c['predict_gain'] = predict_gain
             c['target_id_lock_enabled'] = target_id_lock_enabled
             # 同步卡尔曼参数到预测器
             self.kalman_enabled = kalman_enabled
             self.kalman_predict_frames = kalman_predict_frames
+            self.predict_gain = predict_gain
             if abs(self.kalman.process_noise - kalman_process_noise) > 1e-6 or \
                abs(self.kalman.measurement_noise - kalman_measurement_noise) > 1e-6:
                 self.kalman.process_noise = kalman_process_noise
@@ -620,15 +640,14 @@ class AimPipeline:
             if self.last_target_count > 0:
                 self.last_target_count = 0
                 self.last_target_count_by_class.clear()
-                self._reset_pid_integral()
+                self._reset_pid_full()
             self._last_selected_target_id = None
             self._last_selected_target_pos = None
-            # 无目标时，若有锁定目标则消耗宽限帧而非立即释放
+            # 无目标时立即释放锁定
             if target_id_lock and self._locked_track_id is not None:
-                self._lock_grace_frames += 1
-                if self._lock_grace_frames > self._lock_grace_max:
-                    self._locked_track_id = None
-                    self._lock_grace_frames = 0
+                self._locked_track_id = None
+                self._locked_last_pos = None
+                self._lock_grace_frames = 0
             return None
 
         try:
@@ -652,15 +671,14 @@ class AimPipeline:
             if self.last_target_count > 0:
                 self.last_target_count = 0
                 self.last_target_count_by_class.clear()
-                self._reset_pid_integral()
+                self._reset_pid_full()
             self._last_selected_target_id = None
             self._last_selected_target_pos = None
-            # 有效目标为空时消耗宽限帧
+            # 有效目标为空时立即释放锁定
             if target_id_lock and self._locked_track_id is not None:
-                self._lock_grace_frames += 1
-                if self._lock_grace_frames > self._lock_grace_max:
-                    self._locked_track_id = None
-                    self._lock_grace_frames = 0
+                self._locked_track_id = None
+                self._locked_last_pos = None
+                self._lock_grace_frames = 0
             return None
 
         target_switch_delay = float(aim_params.get('target_switch_delay', 0.0))
@@ -673,14 +691,14 @@ class AimPipeline:
         if target_switch_delay > 0 and (not self.is_waiting_for_switch) and (prev_total_count > 1) and (current_total_count < prev_total_count):
             self.is_waiting_for_switch = True
             self.target_switch_time_ms = time.time() * 1000.0
-            self._reset_pid_integral()
+            self._reset_pid_full()
             return None
 
         if self.is_waiting_for_switch and current_total_count > prev_total_count:
             self.is_waiting_for_switch = False
 
         if target_switch_delay == 0 and current_total_count < prev_total_count and prev_total_count > 0:
-            self._reset_pid_integral()
+            self._reset_pid_full()
 
         if self.is_waiting_for_switch:
             now_ms = time.time() * 1000.0
@@ -699,25 +717,39 @@ class AimPipeline:
                 if t.get('track_id') == self._locked_track_id or t.get('id') == self._locked_track_id:
                     locked_target = t
                     break
+            # track_id 未匹配时，尝试位置兜底重关联
+            # （ByteTracker 可能给同一物理目标分配了新 track_id）
+            if locked_target is None and self._locked_last_pos is not None:
+                lx, ly = self._locked_last_pos
+                best_d = 1e9
+                best_t = None
+                for t in valid_targets:
+                    dx = float(t['pos'][0]) - lx
+                    dy = float(t['pos'][1]) - ly
+                    d = dx * dx + dy * dy
+                    if d < best_d:
+                        best_d = d
+                        best_t = t
+                # 距离阈值：上一位置 100px 以内视为同一目标（覆盖跳跃场景）
+                if best_t is not None and best_d < 100.0 * 100.0:
+                    locked_target = best_t
+                    self._locked_track_id = best_t.get('track_id', best_t.get('id'))
+
             if locked_target is not None:
                 # 锁定目标仍存在，重置宽限计数
                 self._lock_grace_frames = 0
                 self._last_selected_target_id = locked_target.get('id')
                 self._last_selected_target_pos = locked_target.get('pos')
+                self._locked_last_pos = locked_target.get('pos')
                 self.last_target_count = current_total_count
                 return locked_target
             else:
-                # 锁定目标不在当前帧，消耗宽限帧
-                self._lock_grace_frames += 1
-                if self._lock_grace_frames <= self._lock_grace_max:
-                    # 宽限期内：不选新目标，等待锁定目标回来
-                    self.last_target_count = current_total_count
-                    return None
-                else:
-                    # 宽限期结束：释放锁定，允许选择新目标
-                    self._locked_track_id = None
-                    self._lock_grace_frames = 0
-                    self._reset_pid_integral()
+                # 锁定目标不在当前帧：立即释放锁定，选择下一个目标
+                # （位置兜底已处理 ByteTracker 重分配 ID 的情况，不需要空等）
+                self._locked_track_id = None
+                self._locked_last_pos = None
+                self._lock_grace_frames = 0
+                self._reset_pid_full()
 
         # ---- 目标锁定冷却：选中目标后一段时间内不切换 ----
         lock_ms = float(aim_params.get('target_lock_ms', 150.0))
@@ -770,13 +802,14 @@ class AimPipeline:
         # 目标切换时重置锁定计时
         if selected.get('id') != self._last_selected_target_id:
             self._target_lock_time = time.time() * 1000.0
-            self._reset_pid_integral()
+            self._reset_pid_full()
 
         self._last_selected_target_id = selected.get('id')
         self._last_selected_target_pos = selected.get('pos')
         # 更新强锁定 track_id
         if target_id_lock:
             self._locked_track_id = selected.get('track_id', selected.get('id'))
+            self._locked_last_pos = selected.get('pos')
         return selected
 
     def _find_locked_target(self, valid_targets, sticky_margin):
@@ -962,11 +995,13 @@ class AimPipeline:
                 self._last_output_target_id = None
                 self._last_output_target_pos = None
                 self._prev_aim_pos = None
-                self._prev_pid_output = (0.0, 0.0)
+                self._prev_aim_time = None
                 self._est_vx = 0.0
                 self._est_vy = 0.0
                 self._lead_x = 0.0
                 self._lead_y = 0.0
+                self._vel_dir_count = 0
+                self._prev_pid_raw = (0.0, 0.0)
                 return None
             target_id = nearest.get('id')
             aim_x = float(nearest['pos'][0])
@@ -975,52 +1010,63 @@ class AimPipeline:
             # 目标切换时重置速度估计
             if target_id != self._last_output_target_id and self._last_output_target_id is not None:
                 self._prev_aim_pos = None
+                self._prev_aim_time = None
                 self._est_vx = 0.0
                 self._est_vy = 0.0
                 self._lead_x = 0.0
                 self._lead_y = 0.0
+                self._vel_dir_count = 0
+                self._prev_pid_raw = (0.0, 0.0)
 
-            # ---- 移动预测：前馈偏移（补偿自身鼠标运动的速度估计） ----
-            lead_ff_x = 0.0
-            lead_ff_y = 0.0
+            # ---- 移动预测：PID输出补偿 + 预测位置喂给 PID ----
+            # 问题：PID 跟踪会抵消目标的屏幕速度，导致观测速度≈0
+            # 方案：用上一帧 PID 输出（=我们移动鼠标的量）补偿观测速度
+            #       true_vel ≈ obs_vel + prev_pid_output × predict_gain
+            now = time.time()
             if self.kalman_enabled and self.kalman_predict_frames > 0:
-                # 用目标位置变化 + 上一帧PID输出估算真实目标速度
-                # 原理：观测位移 = 真实目标位移 - 我们鼠标移动造成的画面偏移
-                # 所以：真实速度 ≈ 观测位移 + 上一帧鼠标移动
-                if self._prev_aim_pos is not None:
-                    obs_dx = aim_x - self._prev_aim_pos[0]
-                    obs_dy = aim_y - self._prev_aim_pos[1]
-                    # 补偿：我们上一帧的鼠标移动让目标反向偏移
-                    comp_dx = obs_dx + self._prev_pid_output[0]
-                    comp_dy = obs_dy + self._prev_pid_output[1]
-                    # EMA 平滑速度
-                    va = self._vel_smooth
-                    self._est_vx = va * comp_dx + (1.0 - va) * self._est_vx
-                    self._est_vy = va * comp_dy + (1.0 - va) * self._est_vy
+                if self._prev_aim_pos is not None and self._prev_aim_time is not None:
+                    dt = now - self._prev_aim_time
+                    if 0.001 < dt < 0.5:
+                        obs_dx = aim_x - self._prev_aim_pos[0]
+                        obs_dy = aim_y - self._prev_aim_pos[1]
+                        # 用 PID 输出补偿：屏幕移动了 prev_pid * gain 像素
+                        comp_dx = obs_dx + self._prev_pid_raw[0] * self.predict_gain
+                        comp_dy = obs_dy + self._prev_pid_raw[1] * self.predict_gain
+                        raw_vx = comp_dx / dt
+                        raw_vy = comp_dy / dt
+                        max_vel = 2000.0
+                        raw_vx = max(-max_vel, min(max_vel, raw_vx))
+                        raw_vy = max(-max_vel, min(max_vel, raw_vy))
+                        va = self._vel_smooth
+                        self._est_vx = va * raw_vx + (1.0 - va) * self._est_vx
+                        self._est_vy = va * raw_vy + (1.0 - va) * self._est_vy
+                        if (raw_vx * self._est_vx + raw_vy * self._est_vy) > 0:
+                            self._vel_dir_count = min(self._vel_dir_count + 1, 30)
+                        else:
+                            self._vel_dir_count = max(self._vel_dir_count - 2, 0)
 
                 vel_mag = math.sqrt(self._est_vx * self._est_vx + self._est_vy * self._est_vy)
-                # 死区：低于 0.8 像素/帧 视为静止/抖动
-                if vel_mag > 0.8:
-                    factor = float(self.kalman_predict_frames)
-                    raw_lx = self._est_vx * factor
-                    raw_ly = self._est_vy * factor
+                if vel_mag > 60.0 and self._vel_dir_count >= 3:
+                    lead_time = float(self.kalman_predict_frames) * 0.008
+                    raw_lx = self._est_vx * lead_time
+                    raw_ly = self._est_vy * lead_time
                     lead_mag = math.sqrt(raw_lx * raw_lx + raw_ly * raw_ly)
-                    max_lead = 50.0
+                    max_lead = 40.0
                     if lead_mag > max_lead:
                         s = max_lead / lead_mag
                         raw_lx *= s
                         raw_ly *= s
-                    # EMA 平滑 lead
                     la = self._lead_smooth
                     self._lead_x = la * raw_lx + (1.0 - la) * self._lead_x
                     self._lead_y = la * raw_ly + (1.0 - la) * self._lead_y
-                    lead_ff_x = self._lead_x
-                    lead_ff_y = self._lead_y
                 else:
-                    self._lead_x *= 0.7
-                    self._lead_y *= 0.7
+                    self._lead_x *= 0.5
+                    self._lead_y *= 0.5
 
-                self._prev_aim_pos = (aim_x, aim_y)
+                aim_x += self._lead_x
+                aim_y += self._lead_y
+                self._prev_aim_pos = (aim_x - self._lead_x, aim_y - self._lead_y)
+                self._prev_aim_time = now
 
             nearest['pos'] = (aim_x, aim_y)
             self._last_output_target_id = target_id
@@ -1029,15 +1075,6 @@ class AimPipeline:
             error_x = aim_x - float(cx)
             error_y = aim_y - float(cy)
             pid_result = self._compute_pid_move_locked(error_x, error_y, pressed_key_config, auto_y=auto_y, left_pressed_long=left_pressed_long)
-
-            # 记录本帧 PID 输出用于下一帧速度补偿
-            if pid_result is not None:
-                self._prev_pid_output = (float(pid_result[0]), float(pid_result[1]))
-                # 将 lead 前馈叠加到 PID 输出
-                if abs(lead_ff_x) > 0.1 or abs(lead_ff_y) > 0.1:
-                    pid_result = (pid_result[0] + lead_ff_x, pid_result[1] + lead_ff_y)
-            else:
-                self._prev_pid_output = (0.0, 0.0)
             return pid_result
 
     def step_frame(self, frame_payload, pressed_key_config, cfg, center_xy, aim_scope, identify_left, identify_top, model_area, auto_y=False, left_pressed_long=False, debug=False):
@@ -1073,6 +1110,7 @@ class AimPipeline:
     def _compute_pid_move_locked(self, error_x, error_y, pressed_key_config, auto_y=False, left_pressed_long=False):
         """PID计算 + 量化移动量（内部方法，调用时已持有锁）"""
         relative_move_x, relative_move_y = self.pid.compute(error_x, error_y)
+        self._prev_pid_raw = (relative_move_x, relative_move_y)
         if auto_y and left_pressed_long:
             relative_move_y = 0
         move_threshold = float(pressed_key_config.get('move_deadzone', 1.0))
