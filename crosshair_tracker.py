@@ -274,7 +274,11 @@ class CrosshairTracker:
                     self._mask_accum = mask.copy()
                 self._mask_accum_count += 1
             else:
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kern_open, iterations=1)
+                # Density-adaptive morphology: when many pixels match
+                # (e.g. green range hitting environment), use stronger opening
+                density = pixel_count / max(1, mw * mh)
+                open_iter = 2 if density > 0.15 else 1
+                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kern_open, iterations=open_iter)
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kern_close, iterations=1)
                 self._mask_accum = None
                 self._mask_accum_count = 0
