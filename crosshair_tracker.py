@@ -554,6 +554,8 @@ class CrosshairTracker:
     @staticmethod
     def _filter_contours(contours, min_area, max_area, is_small, roi_cx, roi_cy):
         valid = []
+        # Crosshair is always near ROI center; reject contours in outer 30%
+        max_cdist_sq = (roi_cx * 0.7) ** 2 + (roi_cy * 0.7) ** 2
         for cnt in contours:
             bx, by, bw, bh = cv2.boundingRect(cnt)
             rect_area = bw * bh
@@ -578,6 +580,8 @@ class CrosshairTracker:
                 cX = bx + bw / 2.0
                 cY = by + bh / 2.0
             dist_sq = (cX - roi_cx) ** 2 + (cY - roi_cy) ** 2
+            if dist_sq > max_cdist_sq:
+                continue
             valid.append((cnt, dist_sq, area, (bx, by, bw, bh), (cX, cY), 0.0))
         return valid
 
