@@ -144,8 +144,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
         scores: 置信度分数。
         classes: 类别标签。
     """
-    pred = np.asarray(pred)
-    pred = np.squeeze(pred)
+    pred = np.squeeze(np.asarray(pred))
     
     # 维度检查与转置处理
     if pred.ndim != 2:
@@ -187,12 +186,13 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
 
     # 1. 统一坐标格式为 cx, cy, w, h；同时构建 NMS 输入 [x, y, w, h] (左上角)
     # 自动检测是否为 xyxy 格式 (x1, y1, x2, y2)
+    # 使用前8个样本快速判断，避免每帧检查100个
     _is_xyxy = False
     if pred_boxes.shape[0] > 0:
-        sample_size = min(100, pred_boxes.shape[0])
+        sample_size = min(8, pred_boxes.shape[0])
         sample = pred_boxes[:sample_size]
         xyxy_check = (sample[:, 2] > sample[:, 0]) & (sample[:, 3] > sample[:, 1])
-        _is_xyxy = xyxy_check.sum() > sample_size * 0.9
+        _is_xyxy = xyxy_check.sum() > sample_size * 0.7
 
     if _is_xyxy:
         x1 = pred_boxes[:, 0]
@@ -319,6 +319,12 @@ def nms(pred, confidence_threshold, iou_threshold, class_num):
 
 def read_img(img_data, size=(320, 320)):
     target_w, target_h = size
+    h, w = img_data.shape[:2]
+    if h == target_h and w == target_w:
+        # 截屏尺寸==模型尺寸，跳过 resize，直接 BGR→RGB + normalize + CHW
+        blob = np.ascontiguousarray(img_data[:, :, ::-1].transpose(2, 0, 1), dtype=np.float32)
+        blob *= NORMALIZE_FACTOR
+        return blob.reshape(1, 3, target_h, target_w)
     if NUMBA_AVAILABLE and target_w == 640 and (target_h == 640):
         try:
             normalized_img = numba_resize_and_normalize(img_data, target_h, target_w)
