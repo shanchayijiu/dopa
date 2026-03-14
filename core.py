@@ -1680,6 +1680,11 @@ class Valorant:
         input_shape_weight = self.engine.get_input_shape()[3]
         input_shape_height = self.engine.get_input_shape()[2]
         print('模型输入尺寸：', input_shape_weight, input_shape_height)
+        # 预计算输出列数，避免每帧查询
+        if is_v8:
+            _output_cols = class_num + 4
+        else:
+            _output_cols = class_num + 5
         frame_count = 0
         start_time = time.perf_counter()
         last_fps_update_time = time.perf_counter()
@@ -1777,22 +1782,19 @@ class Valorant:
                     print(f"[Infer] 推理异常: {infer_e}")
                 time.sleep(0.01)
                 continue
-            current_infer_time_ms = (time.perf_counter() - infer_start_time) * 1000
+            infer_end_time = time.perf_counter()
+            current_infer_time_ms = (infer_end_time - infer_start_time) * 1000
             latency_values.append(current_infer_time_ms)
-            current_latency_time = time.perf_counter()
-            if current_latency_time - last_latency_update_time >= 1.0 and latency_values:
+            if infer_end_time - last_latency_update_time >= 1.0 and latency_values:
                 avg_latency = sum(latency_values) / len(latency_values)
                 display_latency_ms = avg_latency
                 last_latency_text = f'latency: {avg_latency:.2f}ms'
                 latency_values = []
-                last_latency_update_time = current_latency_time
+                last_latency_update_time = infer_end_time
             infer_time_ms = display_latency_ms
             pred = outputs[0]
             if pred.ndim == 1:
-                if is_v8:
-                    C = self.engine.get_class_num_v8() + 4
-                else:
-                    C = self.engine.get_class_num() + 5
+                C = _output_cols
                 if pred.size % C!= 0:
                     raise ValueError(f'推理输出长度{pred.size}不能整除每行特征数{C}，请检查模型！')
                 pred = pred.reshape((-1), C)
