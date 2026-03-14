@@ -144,8 +144,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
         scores: 置信度分数。
         classes: 类别标签。
     """
-    pred = np.asarray(pred)
-    pred = np.squeeze(pred)
+    pred = np.squeeze(np.asarray(pred))
     
     # 维度检查与转置处理
     if pred.ndim != 2:
@@ -187,12 +186,13 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
 
     # 1. 统一坐标格式为 cx, cy, w, h；同时构建 NMS 输入 [x, y, w, h] (左上角)
     # 自动检测是否为 xyxy 格式 (x1, y1, x2, y2)
+    # 使用前8个样本快速判断，避免每帧检查100个
     _is_xyxy = False
     if pred_boxes.shape[0] > 0:
-        sample_size = min(100, pred_boxes.shape[0])
+        sample_size = min(8, pred_boxes.shape[0])
         sample = pred_boxes[:sample_size]
         xyxy_check = (sample[:, 2] > sample[:, 0]) & (sample[:, 3] > sample[:, 1])
-        _is_xyxy = xyxy_check.sum() > sample_size * 0.9
+        _is_xyxy = xyxy_check.sum() > sample_size * 0.7
 
     if _is_xyxy:
         x1 = pred_boxes[:, 0]
