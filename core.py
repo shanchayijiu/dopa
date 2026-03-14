@@ -376,6 +376,8 @@ class Valorant:
         self.crosshair_preview_texture_tag = 'crosshair_preview_texture'
         # 准星追踪器（独立模块）
         self._crosshair_tracker = CrosshairTracker()
+        self._crosshair_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='crosshair')
+        self._crosshair_future = None
         self.crosshair_pick_mode = False
         self.crosshair_use_pending = False
         self.crosshair_pending_hsv = None
@@ -1501,9 +1503,14 @@ class Valorant:
         return (self.screen_center_x, self.screen_center_y)
 
     def update_crosshair_tracking(self, frame):
-        """委托给 CrosshairTracker"""
+        """异步委托给 CrosshairTracker，不阻塞推理线程"""
+        # 如果上一帧还没完成，跳过本帧（用最新结果即可）
+        fut = self._crosshair_future
+        if fut is not None and not fut.done():
+            return
         cfg = self._get_crosshair_lock_config()
-        self._crosshair_tracker.update(frame, cfg)
+        self._crosshair_future = self._crosshair_executor.submit(
+            self._crosshair_tracker.update, frame, cfg)
 
     def _try_crosshair_pull(self, crosshair_cfg):
         """委托给 CrosshairTracker，返回移动量后调用 execute_move"""
