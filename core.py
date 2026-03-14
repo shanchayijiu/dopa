@@ -4015,23 +4015,22 @@ class Valorant:
             root = tk.Tk()
             root.withdraw()
             root.attributes('-topmost', True)
-            filetypes = [('所有支持的模型', '*.onnx;*.model;*.ztx'), ('ONNX模型', '*.onnx'), ('奶龙加密模型', '*.model'), ('ZTX加密模型', '*.ztx'), ('所有文件', '*.*')]
+            filetypes = [('所有支持的模型', '*.onnx;*.engine;*.model;*.ztx'), ('ONNX模型', '*.onnx'), ('TensorRT引擎', '*.engine'), ('奶龙加密模型', '*.model'), ('ZTX加密模型', '*.ztx'), ('所有文件', '*.*')]
             file_path = filedialog.askopenfilename(title='选择模型文件', filetypes=filetypes, parent=root)
             root.destroy()
             if file_path:
-                valid_extensions = ['.onnx', '.ztx', '.ZTX']
+                valid_extensions = ['.onnx', '.engine', '.ztx']
                 file_ext = os.path.splitext(file_path)[1].lower()
                 if file_ext in valid_extensions:
                     if hasattr(self, 'is_trt_checkbox') and self.is_trt_checkbox is not None:
-                        current_trt_value = dpg.get_value(self.is_trt_checkbox)
-                        if current_trt_value:
-                            dpg.set_value(self.is_trt_checkbox, False)
-                            self.config['groups'][self.group]['is_trt'] = False
+                        is_engine = (file_ext == '.engine')
+                        dpg.set_value(self.is_trt_checkbox, is_engine)
+                        self.config['groups'][self.group]['is_trt'] = is_engine
                     dpg.set_value(self.infer_model_input, file_path)
                     self.on_infer_model_change(self.infer_model_input, file_path)
                 else:
                     print(f'不支持的文件格式: {file_ext}')
-                    print('支持的格式: .onnx, .ZTX, .ZTX')
+                    print('支持的格式: .onnx, .engine, .ztx')
         except Exception as e:
             print(f'选择模型文件时出错: {e}')
 
