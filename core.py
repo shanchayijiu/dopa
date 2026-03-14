@@ -5020,7 +5020,7 @@ class Valorant:
                     self.engine.enable_cuda_graph()
                 except Exception as e:
                     print(f'启用 CUDA Graph 失败: {e}')
-            if hasattr(self.engine, 'disable_cuda_graph'):
+            elif hasattr(self.engine, 'disable_cuda_graph'):
                 try:
                     self.engine.disable_cuda_graph()
                 except Exception:
