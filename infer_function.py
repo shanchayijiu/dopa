@@ -173,7 +173,7 @@ def nms_v8(pred, conf_thres, iou_thres, adaptive_nms=True):
         # 为了性能，先过滤掉低置信度的
         class_scores = pred[:, 4:]
         class_ids = np.argmax(class_scores, axis=1).astype(np.int32)
-        scores = np.max(class_scores, axis=1)
+        scores = class_scores[np.arange(len(class_scores)), class_ids]
 
     # 初步置信度过滤
     valid_mask = scores > conf_thres
