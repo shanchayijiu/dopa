@@ -275,8 +275,9 @@ class AimPipeline:
         # 目标ID强锁定
         self.target_id_lock_enabled = True
         self._locked_track_id = None
+        self._locked_last_pos = None      # 锁定目标最后已知位置
         self._lock_grace_frames = 0       # 锁定目标消失后的宽限帧计数
-        self._lock_grace_max = 5          # 最大宽限帧数（目标消失N帧内保持锁定）
+        self._lock_grace_max = 20         # 最大宽限帧数（~300-600ms）
 
     def reset(self):
         with self._infer_lock:
@@ -291,6 +292,7 @@ class AimPipeline:
             self.tracker.reset()
             self.kalman.reset()
             self._locked_track_id = None
+            self._locked_last_pos = None
             self._lock_grace_frames = 0
             self._lead_x = 0.0
             self._lead_y = 0.0
@@ -315,6 +317,7 @@ class AimPipeline:
             self._aim_position_cache.clear()
             self._target_lock_time = 0.0
             self._locked_track_id = None
+            self._locked_last_pos = None
             self._lock_grace_frames = 0
 
     def _prune_aim_position_cache(self):
@@ -628,6 +631,7 @@ class AimPipeline:
                 self._lock_grace_frames += 1
                 if self._lock_grace_frames > self._lock_grace_max:
                     self._locked_track_id = None
+                    self._locked_last_pos = None
                     self._lock_grace_frames = 0
             return None
 
@@ -660,6 +664,7 @@ class AimPipeline:
                 self._lock_grace_frames += 1
                 if self._lock_grace_frames > self._lock_grace_max:
                     self._locked_track_id = None
+                    self._locked_last_pos = None
                     self._lock_grace_frames = 0
             return None
 
@@ -699,11 +704,30 @@ class AimPipeline:
                 if t.get('track_id') == self._locked_track_id or t.get('id') == self._locked_track_id:
                     locked_target = t
                     break
+            # track_id 未匹配时，尝试位置兜底重关联
+            # （ByteTracker 可能给同一物理目标分配了新 track_id）
+            if locked_target is None and self._locked_last_pos is not None:
+                lx, ly = self._locked_last_pos
+                best_d = 1e9
+                best_t = None
+                for t in valid_targets:
+                    dx = float(t['pos'][0]) - lx
+                    dy = float(t['pos'][1]) - ly
+                    d = dx * dx + dy * dy
+                    if d < best_d:
+                        best_d = d
+                        best_t = t
+                # 距离阈值：上一位置 40px 以内视为同一目标
+                if best_t is not None and best_d < 40.0 * 40.0:
+                    locked_target = best_t
+                    self._locked_track_id = best_t.get('track_id', best_t.get('id'))
+
             if locked_target is not None:
                 # 锁定目标仍存在，重置宽限计数
                 self._lock_grace_frames = 0
                 self._last_selected_target_id = locked_target.get('id')
                 self._last_selected_target_pos = locked_target.get('pos')
+                self._locked_last_pos = locked_target.get('pos')
                 self.last_target_count = current_total_count
                 return locked_target
             else:
@@ -716,6 +740,7 @@ class AimPipeline:
                 else:
                     # 宽限期结束：释放锁定，允许选择新目标
                     self._locked_track_id = None
+                    self._locked_last_pos = None
                     self._lock_grace_frames = 0
                     self._reset_pid_integral()
 
@@ -777,6 +802,7 @@ class AimPipeline:
         # 更新强锁定 track_id
         if target_id_lock:
             self._locked_track_id = selected.get('track_id', selected.get('id'))
+            self._locked_last_pos = selected.get('pos')
         return selected
 
     def _find_locked_target(self, valid_targets, sticky_margin):
