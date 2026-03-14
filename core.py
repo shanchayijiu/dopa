@@ -4010,6 +4010,8 @@ class Valorant:
     def on_select_model_click(self, sender, app_data):
         """选择模型文件的回调函数"""
         try:
+            import tkinter as tk
+            from tkinter import filedialog
             root = tk.Tk()
             root.withdraw()
             root.attributes('-topmost', True)
