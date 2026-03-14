@@ -162,9 +162,14 @@ class CrosshairTracker:
             s_min, s_max = s_max, s_min
         if v_max < v_min:
             v_min, v_max = v_max, v_min
-        return {'h_min': h_min, 'h_max': h_max,
-                's_min': s_min, 's_max': s_max,
-                'v_min': v_min, 'v_max': v_max}
+        result = {'h_min': h_min, 'h_max': h_max,
+                  's_min': s_min, 's_max': s_max,
+                  'v_min': v_min, 'v_max': v_max}
+        # 保留 pick_color 写入的中心值（用于动态容差计算）
+        for key in ('h_center', 's_center', 'v_center'):
+            if key in hsv_range:
+                result[key] = int(hsv_range[key])
+        return result
 
     # ────────────────────────────────────────────
     #  核心：每帧更新
