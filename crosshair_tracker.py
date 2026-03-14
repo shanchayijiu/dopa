@@ -193,11 +193,8 @@ class CrosshairTracker:
         y2 = min(h, y1 + roi_h)
         roi = frame[y1:y2, x1:x2]
 
-        blur_skipped = roi_w <= 30 or roi_h <= 30
-        if blur_skipped:
-            hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        else:
-            hsv = cv2.cvtColor(cv2.GaussianBlur(roi, (3, 3), 0), cv2.COLOR_BGR2HSV)
+        # 不做高斯模糊：准星是 1-2px 细线，模糊会把准星色和背景混合导致丢失
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
         # ── HSV bounds 缓存 ──
         hsv_ranges = cfg.get('hsv_ranges', [])
@@ -258,22 +255,6 @@ class CrosshairTracker:
             if is_small:
                 mask = cv2.dilate(mask, self._kern_dilate_s, iterations=1)
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kern_close_s, iterations=1)
-                if pixel_count < small_thresh // 3:
-                    hsv_raw = hsv if blur_skipped else cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-                    mask_raw = None
-                    for entry in cached:
-                        if entry is None:
-                            continue
-                        _, lo1, hi1, lo2, hi2 = entry
-                        if lo2 is not None:
-                            cm = cv2.bitwise_or(cv2.inRange(hsv_raw, lo1, hi1),
-                                                cv2.inRange(hsv_raw, lo2, hi2))
-                        else:
-                            cm = cv2.inRange(hsv_raw, lo1, hi1)
-                        mask_raw = cm if mask_raw is None else cv2.bitwise_or(mask_raw, cm)
-                    if mask_raw is not None:
-                        mask_raw = cv2.dilate(mask_raw, self._kern_dilate_s, iterations=1)
-                        mask = cv2.bitwise_or(mask, mask_raw)
                 # 多帧累积
                 if self._mask_accum is not None and self._mask_accum.shape == mask.shape:
                     self._mask_accum = cv2.addWeighted(self._mask_accum, 0.5, mask, 0.5, 0)
@@ -283,11 +264,13 @@ class CrosshairTracker:
                     self._mask_accum = mask.copy()
                 self._mask_accum_count += 1
             else:
-                # Density-adaptive morphology: when many pixels match
-                # (e.g. green range hitting environment), use stronger opening
+                # 非小目标模式的形态学处理
                 density = pixel_count / max(1, mw * mh)
-                open_iter = 2 if density > 0.15 else 1
-                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kern_open, iterations=open_iter)
+                if density > 0.08:
+                    # 高密度噪声：用 OPEN 去噪，强度随密度增加
+                    open_iter = 2 if density > 0.15 else 1
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kern_open, iterations=open_iter)
+                # 所有情况都做 CLOSE 连接断裂像素
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kern_close, iterations=1)
                 # Lightweight temporal smoothing to stabilize mask across frames
                 if self._mask_accum is not None and self._mask_accum.shape == mask.shape:
@@ -334,7 +317,7 @@ class CrosshairTracker:
             if should_log:
                 print("准星找色: 未找到轮廓 (匹配像素可能太少)")
             self._miss_count += 1
-            if self._miss_count >= 5:
+            if self._miss_count >= 15:
                 self._decay(cfg)
             return
 
@@ -359,7 +342,7 @@ class CrosshairTracker:
             if should_log:
                 print("准星找色: 没有符合条件的轮廓")
             self._miss_count += 1
-            if self._miss_count >= 5:
+            if self._miss_count >= 15:
                 self._decay(cfg)
             return
 
