@@ -317,11 +317,16 @@ def nms(pred, confidence_threshold, iou_threshold, class_num):
     classes = classes[keep]
     return (boxes, scores, classes)
 
-def read_img(img_data, size=(320, 320)):
+def read_img(img_data, size=(320, 320), out_buffer=None):
     target_w, target_h = size
     h, w = img_data.shape[:2]
     if h == target_h and w == target_w:
-        # 截屏尺寸==模型尺寸，跳过 resize，直接 BGR→RGB + normalize + CHW
+        if out_buffer is not None:
+            # 直写到 pinned memory，跳过中间分配
+            buf = out_buffer.reshape(3, target_h, target_w)
+            np.copyto(buf, img_data[:, :, ::-1].transpose(2, 0, 1))
+            buf *= NORMALIZE_FACTOR
+            return None  # 数据已在 buffer 中
         blob = np.ascontiguousarray(img_data[:, :, ::-1].transpose(2, 0, 1), dtype=np.float32)
         blob *= NORMALIZE_FACTOR
         return blob.reshape(1, 3, target_h, target_w)
