@@ -1694,15 +1694,47 @@ class Valorant:
         infer_debug = self.config['infer_debug']
         frame_skip_ratio = self.config.get('frame_skip_ratio', 0)
         frame_skip_counter = 0
+        # 预处理流水线：在 GPU 推理帧 N 时，CPU 同时截屏+预处理帧 N+1
+        _preprocess_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='preproc')
+        _preprocess_future = None
+        _preprocess_screenshot = None  # 保存截屏原图用于后续 debug 显示
+
+        def _capture_and_preprocess():
+            """截屏 + 准心找色 + 预处理，在后台线程执行"""
+            ss = self.screenshot_manager.get_screenshot(screenshot_region)
+            if ss is None:
+                return None, None
+            self.update_crosshair_tracking(ss)
+            blob = read_img(ss, (input_shape_weight, input_shape_height))
+            return ss, blob
+
         while self.running:
             if frame_skip_ratio > 0:
                 frame_skip_counter += 1
                 if frame_skip_counter % (frame_skip_ratio + 1)!= 0:
                     continue
-            screenshot = self.screenshot_manager.get_screenshot(screenshot_region)
-            if screenshot is None:
-                continue
-            self.update_crosshair_tracking(screenshot)
+            # 流水线取结果：如果有预处理 future，等待它完成
+            if _preprocess_future is not None:
+                try:
+                    _preprocess_screenshot, img_input = _preprocess_future.result()
+                except Exception:
+                    _preprocess_screenshot, img_input = None, None
+                _preprocess_future = None
+                if img_input is None:
+                    # 预处理失败，同步重试
+                    _preprocess_screenshot = self.screenshot_manager.get_screenshot(screenshot_region)
+                    if _preprocess_screenshot is None:
+                        continue
+                    self.update_crosshair_tracking(_preprocess_screenshot)
+                    img_input = read_img(_preprocess_screenshot, (input_shape_weight, input_shape_height))
+            else:
+                # 首帧或回退：同步执行
+                _preprocess_screenshot = self.screenshot_manager.get_screenshot(screenshot_region)
+                if _preprocess_screenshot is None:
+                    continue
+                self.update_crosshair_tracking(_preprocess_screenshot)
+                img_input = read_img(_preprocess_screenshot, (input_shape_weight, input_shape_height))
+            screenshot = _preprocess_screenshot
             frame_count += 1
             current_fps_time = time.perf_counter()
             if current_fps_time - last_fps_update_time >= 1.0:
@@ -1715,7 +1747,8 @@ class Valorant:
                 frame_count = 0
                 start_time = current_fps_time
                 last_fps_update_time = current_fps_time
-            img_input = read_img(screenshot, (input_shape_weight, input_shape_height))
+            # 提交下一帧预处理（与本帧推理并行）
+            _preprocess_future = _preprocess_executor.submit(_capture_and_preprocess)
             infer_start_time = time.perf_counter()
             try:
                 outputs = self.engine.infer(img_input)
