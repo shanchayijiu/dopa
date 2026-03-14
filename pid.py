@@ -1,4 +1,5 @@
 import time
+from math import sqrt as _sqrt
 
 
 class PID:
@@ -157,7 +158,7 @@ class DualAxisPID:
         平滑参数 (smooth_x/y) 被解释为时间常数 (毫秒)
         alpha = dt / (dt + tau)
         """
-        error_distance = (error_x ** 2 + error_y ** 2) ** 0.5
+        error_distance = _sqrt(error_x * error_x + error_y * error_y)
         if error_distance <= self.smooth_deadzone:
             self._last_output['x'] = x_output
             self._last_output['y'] = y_output
@@ -254,7 +255,7 @@ class DualAxisPID:
         x_output = self._apply_limits_and_anti_windup('x', x_output_unsat)
         y_output = self._apply_limits_and_anti_windup('y', y_output_unsat)
         x_output, y_output = self._apply_smoothing(x_output, y_output, error_x, error_y, delta_time)
-        error_magnitude = (error_x ** 2 + error_y ** 2) ** 0.5
+        error_magnitude = _sqrt(error_x * error_x + error_y * error_y)
         if error_magnitude < 5.0:
             deadzone_factor = max(0.1, error_magnitude / 5.0)
             x_output *= deadzone_factor
