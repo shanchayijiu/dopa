@@ -662,7 +662,7 @@ class CrosshairTracker:
     def _score_contours(valid, max_dist_sq, prev_target, roi_size):
         sticky_sq = 0.0
         if prev_target is not None:
-            sticky_sq = (roi_size * 0.15) ** 2
+            sticky_sq = (roi_size * 0.25) ** 2
 
         area_vals = [c[2] for c in valid]
         max_a = max(max(area_vals), 1.0)
@@ -674,7 +674,9 @@ class CrosshairTracker:
             if prev_target is not None:
                 dp = (center[0] - prev_target[0]) ** 2 + (center[1] - prev_target[1]) ** 2
                 if dp < sticky_sq:
-                    score *= 0.5
+                    # Proportional stickiness: closer to prev = stronger bonus
+                    proximity = 1.0 - dp / sticky_sq
+                    score *= max(0.25, 1.0 - proximity * 0.75)
             if score < best_score:
                 best_score = score
                 best_idx = idx
