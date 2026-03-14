@@ -959,6 +959,9 @@ class AimPipeline:
                 model_area=model_area,
             )
             if nearest is None:
+                # During lock grace period, hold position instead of full reset
+                if self._locked_track_id is not None and self._lock_grace_frames > 0:
+                    return (0.0, 0.0)
                 self._last_output_target_id = None
                 self._last_output_target_pos = None
                 self._prev_aim_pos = None
