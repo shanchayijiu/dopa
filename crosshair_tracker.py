@@ -72,6 +72,9 @@ class CrosshairTracker:
         # ── 配置初始化标记 ──
         self._cfg_ensured = False
 
+        # ── lock_box 平滑 ──
+        self._box_ema = None  # (x1, y1, x2, y2) float
+
     # ────────────────────────────────────────────
     #  配置管理
     # ────────────────────────────────────────────
@@ -177,6 +180,7 @@ class CrosshairTracker:
             self._mask_accum_count = 0
             self._miss_count = 0
             self._small_mode = False
+            self._box_ema = None
             return
 
         h, w = frame.shape[:2]
@@ -362,7 +366,21 @@ class CrosshairTracker:
         self._prev_target = (cx_roi, cy_roi)
 
         box = (x1 + bx, y1 + by, x1 + bx + bw, y1 + by + bh)
-        self.lock_box = box
+        # Smooth lock_box with EMA to prevent ±1 pixel jitter
+        box_alpha = 0.35
+        if self._box_ema is None:
+            self._box_ema = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+        else:
+            self._box_ema = (
+                self._box_ema[0] + box_alpha * (box[0] - self._box_ema[0]),
+                self._box_ema[1] + box_alpha * (box[1] - self._box_ema[1]),
+                self._box_ema[2] + box_alpha * (box[2] - self._box_ema[2]),
+                self._box_ema[3] + box_alpha * (box[3] - self._box_ema[3]),
+            )
+        self.lock_box = (
+            int(round(self._box_ema[0])), int(round(self._box_ema[1])),
+            int(round(self._box_ema[2])), int(round(self._box_ema[3])),
+        )
         cross_x = x1 + cx_roi
         cross_y = y1 + cy_roi
 
@@ -422,6 +440,7 @@ class CrosshairTracker:
         else:
             self.offset = (0.0, 0.0)
         self.lock_box = None
+        self._box_ema = None
 
     def try_pull(self, cfg, fallback_deadzone=1.0):
         """计算回拉移动量，返回 (dx, dy) 或 None（不直接操作鼠标）"""
@@ -514,6 +533,7 @@ class CrosshairTracker:
         self._ema_x = 0.0
         self._ema_y = 0.0
         self._ema_initialized = False
+        self._box_ema = None
         self._prev_target = None
         self._mask_accum = None
         self._mask_accum_count = 0
