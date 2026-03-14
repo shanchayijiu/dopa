@@ -744,12 +744,37 @@ class AimPipeline:
                 self.last_target_count = current_total_count
                 return locked_target
             else:
-                # 锁定目标不在当前帧：立即释放锁定，选择下一个目标
-                # （位置兜底已处理 ByteTracker 重分配 ID 的情况，不需要空等）
-                self._locked_track_id = None
-                self._locked_last_pos = None
-                self._lock_grace_frames = 0
-                self._reset_pid_full()
+                # 锁定目标暂时丢失：宽限期内用最后位置保持锁定
+                self._lock_grace_frames += 1
+                if self._lock_grace_frames <= self._lock_grace_max:
+                    # 宽限期内：保持锁定状态，用最后已知位置匹配最近目标
+                    if self._locked_last_pos is not None:
+                        lx, ly = self._locked_last_pos
+                        best_d = 1e9
+                        best_t = None
+                        for t in valid_targets:
+                            dx = float(t['pos'][0]) - lx
+                            dy = float(t['pos'][1]) - ly
+                            d = dx * dx + dy * dy
+                            if d < best_d:
+                                best_d = d
+                                best_t = t
+                        # 宽限期内用更大范围重关联（150px）
+                        if best_t is not None and best_d < 150.0 * 150.0:
+                            self._locked_track_id = best_t.get('track_id', best_t.get('id'))
+                            self._locked_last_pos = best_t.get('pos')
+                            self._last_selected_target_id = best_t.get('id')
+                            self._last_selected_target_pos = best_t.get('pos')
+                            self._lock_grace_frames = 0
+                            return best_t
+                    # 宽限期内但无法重关联，不选新目标
+                    return None
+                else:
+                    # 宽限期耗尽：释放锁定
+                    self._locked_track_id = None
+                    self._locked_last_pos = None
+                    self._lock_grace_frames = 0
+                    self._reset_pid_full()
 
         # ---- 目标锁定冷却：选中目标后一段时间内不切换 ----
         lock_ms = float(aim_params.get('target_lock_ms', 150.0))
