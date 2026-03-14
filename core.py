@@ -2166,9 +2166,7 @@ class Valorant:
                 frame_skip_counter += 1
                 if frame_skip_counter % (frame_skip_ratio + 1)!= 0:
                     continue
-            t0 = time.perf_counter()
             screenshot = self.screenshot_manager.get_screenshot(screenshot_region)
-            cap_ms = (time.perf_counter() - t0) * 1000
             if screenshot is None:
                 continue
             self.update_crosshair_tracking(screenshot)
@@ -2184,9 +2182,7 @@ class Valorant:
                 frame_count = 0
                 start_time = current_fps_time
                 last_fps_update_time = current_fps_time
-            t1 = time.perf_counter()
             img_input = read_img(screenshot, (input_shape_weight, input_shape_height))
-            pre_ms = (time.perf_counter() - t1) * 1000
             infer_start_time = time.perf_counter()
             try:
                 outputs = self.engine.infer(img_input)
@@ -2253,7 +2249,6 @@ class Valorant:
             else:
                 confidence_threshold = min_confidence_threshold
                 iou_t = min(class_iou_thresholds.values()) if class_iou_thresholds else 1.0
-            t3 = time.perf_counter()
             if is_v8:
                 adaptive_nms_enabled = (
                     self.config['small_target_enhancement']['enabled']
@@ -2271,7 +2266,6 @@ class Valorant:
                     input_w=input_shape_weight,
                     input_h=input_shape_height,
                 )
-            post_ms = (time.perf_counter() - t3) * 1000
             
             current_selected_classes = self.pressed_key_config.get('classes', [])
             selected_classes_set = set(current_selected_classes) if current_selected_classes else set()
