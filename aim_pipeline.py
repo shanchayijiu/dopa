@@ -28,6 +28,7 @@ class KalmanPredictor2D:
         self._F_template = np.eye(4, dtype=np.float64)
         self._Q_template = np.zeros((4, 4), dtype=np.float64)
         self._z_buf = np.empty(2, dtype=np.float64)
+        self._P_init = np.diag([100.0, 100.0, 500.0, 500.0])
 
     @property
     def measurement_noise(self):
@@ -46,7 +47,7 @@ class KalmanPredictor2D:
     def _init_state(self, x, y):
         """初始化单个 track 的卡尔曼状态"""
         state = np.array([x, y, 0.0, 0.0], dtype=np.float64)
-        P = np.diag([100.0, 100.0, 500.0, 500.0])
+        P = self._P_init.copy()
         return state, P
 
     def _get_F(self, dt):
