@@ -266,13 +266,15 @@ class AimPipeline:
         self._lead_x = 0.0
         self._lead_y = 0.0
         self._lead_smooth = 0.18  # lead EMA 系数
-        # 速度估计（纯观测，不补偿 PID）
-        self._prev_aim_pos = None       # 上一帧目标屏幕坐标
+        # 速度估计（用 PID 输出补偿屏幕速度）
+        self._prev_aim_pos = None       # 上一帧目标屏幕坐标（原始，不含 lead）
         self._prev_aim_time = None      # 上一帧时间戳
-        self._est_vx = 0.0  # 观测速度估计 (像素/秒)
+        self._est_vx = 0.0  # 补偿后速度估计 (像素/秒)
         self._est_vy = 0.0
-        self._vel_smooth = 0.15  # 速度 EMA 系数（保守，滤除 PID 干扰）
+        self._vel_smooth = 0.25  # 速度 EMA 系数（提高灵敏度）
         self._vel_dir_count = 0  # 连续同向帧数
+        self._prev_pid_raw = (0.0, 0.0)  # 上一帧原始 PID 输出（补偿观测速度用）
+        self.predict_gain = 3.0  # PID输出→屏幕像素的估计系数
         # 目标ID强锁定
         self.target_id_lock_enabled = True
         self._locked_track_id = None
@@ -302,6 +304,7 @@ class AimPipeline:
             self._est_vx = 0.0
             self._est_vy = 0.0
             self._vel_dir_count = 0
+            self._prev_pid_raw = (0.0, 0.0)
             self._cache['aim'].clear()
             self._cache['pid'].clear()
 
@@ -494,6 +497,11 @@ class AimPipeline:
             kalman_measurement_noise = float(kalman_cfg.get('measurement_noise', 15.0))
         except Exception:
             kalman_measurement_noise = 15.0
+        try:
+            predict_gain = float(kalman_cfg.get('predict_gain', 3.0))
+        except Exception:
+            predict_gain = 3.0
+        predict_gain = max(0.0, min(20.0, predict_gain))
 
         # 目标ID强锁定
         target_id_lock_enabled = bool(cfg.get('target_id_lock_enabled', True))
@@ -519,6 +527,7 @@ class AimPipeline:
             kalman_predict_frames,
             kalman_process_noise,
             kalman_measurement_noise,
+            predict_gain,
             target_id_lock_enabled,
         )
         if c.get('key') != key:
@@ -543,10 +552,12 @@ class AimPipeline:
             c['kalman_predict_frames'] = kalman_predict_frames
             c['kalman_process_noise'] = kalman_process_noise
             c['kalman_measurement_noise'] = kalman_measurement_noise
+            c['predict_gain'] = predict_gain
             c['target_id_lock_enabled'] = target_id_lock_enabled
             # 同步卡尔曼参数到预测器
             self.kalman_enabled = kalman_enabled
             self.kalman_predict_frames = kalman_predict_frames
+            self.predict_gain = predict_gain
             if abs(self.kalman.process_noise - kalman_process_noise) > 1e-6 or \
                abs(self.kalman.measurement_noise - kalman_measurement_noise) > 1e-6:
                 self.kalman.process_noise = kalman_process_noise
@@ -999,6 +1010,7 @@ class AimPipeline:
                 self._lead_x = 0.0
                 self._lead_y = 0.0
                 self._vel_dir_count = 0
+                self._prev_pid_raw = (0.0, 0.0)
                 return None
             target_id = nearest.get('id')
             aim_x = float(nearest['pos'][0])
@@ -1013,10 +1025,12 @@ class AimPipeline:
                 self._lead_x = 0.0
                 self._lead_y = 0.0
                 self._vel_dir_count = 0
+                self._prev_pid_raw = (0.0, 0.0)
 
-            # ---- 移动预测：用预测位置替代原始位置喂给 PID ----
-            # 架构：预测偏移加在 PID 输入端（aim_x/y），而非 PID 输出端
-            # 这样 PID 跟踪的是预测点，不会与 lead 打架产生震荡
+            # ---- 移动预测：PID输出补偿 + 预测位置喂给 PID ----
+            # 问题：PID 跟踪会抵消目标的屏幕速度，导致观测速度≈0
+            # 方案：用上一帧 PID 输出（=我们移动鼠标的量）补偿观测速度
+            #       true_vel ≈ obs_vel + prev_pid_output × predict_gain
             now = time.time()
             if self.kalman_enabled and self.kalman_predict_frames > 0:
                 if self._prev_aim_pos is not None and self._prev_aim_time is not None:
@@ -1024,8 +1038,11 @@ class AimPipeline:
                     if 0.001 < dt < 0.5:
                         obs_dx = aim_x - self._prev_aim_pos[0]
                         obs_dy = aim_y - self._prev_aim_pos[1]
-                        raw_vx = obs_dx / dt
-                        raw_vy = obs_dy / dt
+                        # 用 PID 输出补偿：屏幕移动了 prev_pid * gain 像素
+                        comp_dx = obs_dx + self._prev_pid_raw[0] * self.predict_gain
+                        comp_dy = obs_dy + self._prev_pid_raw[1] * self.predict_gain
+                        raw_vx = comp_dx / dt
+                        raw_vy = comp_dy / dt
                         max_vel = 2000.0
                         raw_vx = max(-max_vel, min(max_vel, raw_vx))
                         raw_vy = max(-max_vel, min(max_vel, raw_vy))
@@ -1038,7 +1055,7 @@ class AimPipeline:
                             self._vel_dir_count = max(self._vel_dir_count - 2, 0)
 
                 vel_mag = math.sqrt(self._est_vx * self._est_vx + self._est_vy * self._est_vy)
-                if vel_mag > 80.0 and self._vel_dir_count >= 4:
+                if vel_mag > 60.0 and self._vel_dir_count >= 3:
                     lead_time = float(self.kalman_predict_frames) * 0.008
                     raw_lx = self._est_vx * lead_time
                     raw_ly = self._est_vy * lead_time
@@ -1055,7 +1072,6 @@ class AimPipeline:
                     self._lead_x *= 0.5
                     self._lead_y *= 0.5
 
-                # Apply lead to aim position BEFORE PID
                 aim_x += self._lead_x
                 aim_y += self._lead_y
                 self._prev_aim_pos = (aim_x - self._lead_x, aim_y - self._lead_y)
@@ -1103,6 +1119,7 @@ class AimPipeline:
     def _compute_pid_move_locked(self, error_x, error_y, pressed_key_config, auto_y=False, left_pressed_long=False):
         """PID计算 + 量化移动量（内部方法，调用时已持有锁）"""
         relative_move_x, relative_move_y = self.pid.compute(error_x, error_y)
+        self._prev_pid_raw = (relative_move_x, relative_move_y)
         if auto_y and left_pressed_long:
             relative_move_y = 0
         move_threshold = float(pressed_key_config.get('move_deadzone', 1.0))
