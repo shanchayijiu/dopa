@@ -1,4 +1,5 @@
 import math
+from math import sqrt as _sqrt
 import random
 import time
 import threading
@@ -641,7 +642,7 @@ class AimPipeline:
         for target in targets:
             dx = float(target['pos'][0]) - float(center_x)
             dy = float(target['pos'][1]) - float(center_y)
-            dist = (dx * dx + dy * dy) ** 0.5
+            dist = _sqrt(dx * dx + dy * dy)
             if dist <= aim_scope:
                 target['distance_to_center'] = dist
                 valid_targets.append(target)
@@ -747,7 +748,7 @@ class AimPipeline:
             for t in valid_targets:
                 dx = float(t['pos'][0]) - float(lx)
                 dy = float(t['pos'][1]) - float(ly)
-                d = (dx * dx + dy * dy) ** 0.5
+                d = _sqrt(dx * dx + dy * dy)
                 if d < best_last_dist:
                     best_last_dist = d
                     sticky_target = t
@@ -790,7 +791,7 @@ class AimPipeline:
             for t in valid_targets:
                 dx = float(t['pos'][0]) - float(lx)
                 dy = float(t['pos'][1]) - float(ly)
-                d = (dx * dx + dy * dy) ** 0.5
+                d = _sqrt(dx * dx + dy * dy)
                 if d < best_d:
                     best_d = d
                     best_t = t
@@ -996,7 +997,7 @@ class AimPipeline:
                     self._est_vx = va * comp_dx + (1.0 - va) * self._est_vx
                     self._est_vy = va * comp_dy + (1.0 - va) * self._est_vy
 
-                vel_mag = math.sqrt(self._est_vx ** 2 + self._est_vy ** 2)
+                vel_mag = math.sqrt(self._est_vx * self._est_vx + self._est_vy * self._est_vy)
                 # 死区：低于 0.8 像素/帧 视为静止/抖动
                 if vel_mag > 0.8:
                     factor = float(self.kalman_predict_frames)
