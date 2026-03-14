@@ -355,6 +355,10 @@ class AimPipeline:
         self.pid._i_term['x'] = 0
         self.pid._i_term['y'] = 0
 
+    def _reset_pid_full(self):
+        """完整重置 PID 状态（目标切换时调用，防止旧状态污染新目标）"""
+        self.pid.reset()
+
     def _coerce_boxes(self, boxes):
         if boxes is None:
             return None
@@ -636,16 +640,14 @@ class AimPipeline:
             if self.last_target_count > 0:
                 self.last_target_count = 0
                 self.last_target_count_by_class.clear()
-                self._reset_pid_integral()
+                self._reset_pid_full()
             self._last_selected_target_id = None
             self._last_selected_target_pos = None
-            # 无目标时，若有锁定目标则消耗宽限帧而非立即释放
+            # 无目标时立即释放锁定
             if target_id_lock and self._locked_track_id is not None:
-                self._lock_grace_frames += 1
-                if self._lock_grace_frames > self._lock_grace_max:
-                    self._locked_track_id = None
-                    self._locked_last_pos = None
-                    self._lock_grace_frames = 0
+                self._locked_track_id = None
+                self._locked_last_pos = None
+                self._lock_grace_frames = 0
             return None
 
         try:
@@ -669,16 +671,14 @@ class AimPipeline:
             if self.last_target_count > 0:
                 self.last_target_count = 0
                 self.last_target_count_by_class.clear()
-                self._reset_pid_integral()
+                self._reset_pid_full()
             self._last_selected_target_id = None
             self._last_selected_target_pos = None
-            # 有效目标为空时消耗宽限帧
+            # 有效目标为空时立即释放锁定
             if target_id_lock and self._locked_track_id is not None:
-                self._lock_grace_frames += 1
-                if self._lock_grace_frames > self._lock_grace_max:
-                    self._locked_track_id = None
-                    self._locked_last_pos = None
-                    self._lock_grace_frames = 0
+                self._locked_track_id = None
+                self._locked_last_pos = None
+                self._lock_grace_frames = 0
             return None
 
         target_switch_delay = float(aim_params.get('target_switch_delay', 0.0))
@@ -691,14 +691,14 @@ class AimPipeline:
         if target_switch_delay > 0 and (not self.is_waiting_for_switch) and (prev_total_count > 1) and (current_total_count < prev_total_count):
             self.is_waiting_for_switch = True
             self.target_switch_time_ms = time.time() * 1000.0
-            self._reset_pid_integral()
+            self._reset_pid_full()
             return None
 
         if self.is_waiting_for_switch and current_total_count > prev_total_count:
             self.is_waiting_for_switch = False
 
         if target_switch_delay == 0 and current_total_count < prev_total_count and prev_total_count > 0:
-            self._reset_pid_integral()
+            self._reset_pid_full()
 
         if self.is_waiting_for_switch:
             now_ms = time.time() * 1000.0
@@ -744,18 +744,12 @@ class AimPipeline:
                 self.last_target_count = current_total_count
                 return locked_target
             else:
-                # 锁定目标不在当前帧，消耗宽限帧
-                self._lock_grace_frames += 1
-                if self._lock_grace_frames <= self._lock_grace_max:
-                    # 宽限期内：不选新目标，等待锁定目标回来
-                    self.last_target_count = current_total_count
-                    return None
-                else:
-                    # 宽限期结束：释放锁定，允许选择新目标
-                    self._locked_track_id = None
-                    self._locked_last_pos = None
-                    self._lock_grace_frames = 0
-                    self._reset_pid_integral()
+                # 锁定目标不在当前帧：立即释放锁定，选择下一个目标
+                # （位置兜底已处理 ByteTracker 重分配 ID 的情况，不需要空等）
+                self._locked_track_id = None
+                self._locked_last_pos = None
+                self._lock_grace_frames = 0
+                self._reset_pid_full()
 
         # ---- 目标锁定冷却：选中目标后一段时间内不切换 ----
         lock_ms = float(aim_params.get('target_lock_ms', 150.0))
@@ -808,7 +802,7 @@ class AimPipeline:
         # 目标切换时重置锁定计时
         if selected.get('id') != self._last_selected_target_id:
             self._target_lock_time = time.time() * 1000.0
-            self._reset_pid_integral()
+            self._reset_pid_full()
 
         self._last_selected_target_id = selected.get('id')
         self._last_selected_target_pos = selected.get('pos')
@@ -998,10 +992,6 @@ class AimPipeline:
                 model_area=model_area,
             )
             if nearest is None:
-                # During lock grace period, don't interfere with user mouse
-                # (returning (0,0) would call execute_move and block crosshair pull)
-                if self._locked_track_id is not None and self._lock_grace_frames > 0:
-                    return None
                 self._last_output_target_id = None
                 self._last_output_target_pos = None
                 self._prev_aim_pos = None
