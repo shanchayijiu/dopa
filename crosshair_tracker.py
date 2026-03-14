@@ -374,7 +374,15 @@ class CrosshairTracker:
         best = self._score_contours(valid, max_dist_sq, self._prev_target,
                                     max(actual_w, actual_h))
         _, _, area, (bx, by, bw, bh), (cx_roi, cy_roi), _ = best
-        self._prev_target = (cx_roi, cy_roi)
+        # Smooth _prev_target with EMA to stabilize contour selection
+        if self._prev_target is not None:
+            pt_alpha = 0.4
+            self._prev_target = (
+                self._prev_target[0] + pt_alpha * (cx_roi - self._prev_target[0]),
+                self._prev_target[1] + pt_alpha * (cy_roi - self._prev_target[1]),
+            )
+        else:
+            self._prev_target = (cx_roi, cy_roi)
 
         box = (x1 + bx, y1 + by, x1 + bx + bw, y1 + by + bh)
         # Smooth lock_box with EMA to prevent ±1 pixel jitter
@@ -405,11 +413,11 @@ class CrosshairTracker:
         ema_base = max(0.05, min(1.0, float(cfg.get('ema_smooth', 0.4))))
         mag = abs(raw_dx) + abs(raw_dy)
         if mag > 30.0:
-            alpha = min(1.0, ema_base * 2.0)
+            alpha = min(0.7, ema_base * 1.5)
         elif mag > 10.0:
             alpha = ema_base
         else:
-            alpha = max(0.05, ema_base * 0.6)
+            alpha = max(0.05, ema_base * 0.5)
 
         if not self._ema_initialized:
             self._ema_x = raw_dx
