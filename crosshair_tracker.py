@@ -284,7 +284,13 @@ class CrosshairTracker:
                 open_iter = 2 if density > 0.15 else 1
                 mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._kern_open, iterations=open_iter)
                 mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kern_close, iterations=1)
-                self._mask_accum = None
+                # Lightweight temporal smoothing to stabilize mask across frames
+                if self._mask_accum is not None and self._mask_accum.shape == mask.shape:
+                    self._mask_accum = cv2.addWeighted(self._mask_accum, 0.3, mask, 0.7, 0)
+                    _, mc = cv2.threshold(self._mask_accum, 100, 255, cv2.THRESH_BINARY)
+                    mask = mc
+                else:
+                    self._mask_accum = mask.copy()
                 self._mask_accum_count = 0
 
         # ── 调试日志 ──
