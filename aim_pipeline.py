@@ -265,13 +265,14 @@ class AimPipeline:
         # 移动预测平滑状态
         self._lead_x = 0.0
         self._lead_y = 0.0
-        self._lead_smooth = 0.06  # lead EMA 系数
+        self._lead_smooth = 0.18  # lead EMA 系数
         # 自维护速度估计（补偿自身鼠标运动）
         self._prev_aim_pos = None       # 上一帧目标屏幕坐标
-        self._prev_pid_output = (0.0, 0.0)  # 上一帧 PID 输出
-        self._est_vx = 0.0  # 补偿后的速度估计 (像素/帧)
+        self._prev_aim_time = None      # 上一帧时间戳
+        self._prev_pid_only = (0.0, 0.0)  # 上一帧 PID 输出（不含 lead，用于速度补偿）
+        self._est_vx = 0.0  # 补偿后的速度估计 (像素/秒)
         self._est_vy = 0.0
-        self._vel_smooth = 0.08  # 速度 EMA 系数
+        self._vel_smooth = 0.25  # 速度 EMA 系数
         # 目标ID强锁定
         self.target_id_lock_enabled = True
         self._locked_track_id = None
@@ -297,7 +298,8 @@ class AimPipeline:
             self._lead_x = 0.0
             self._lead_y = 0.0
             self._prev_aim_pos = None
-            self._prev_pid_output = (0.0, 0.0)
+            self._prev_aim_time = None
+            self._prev_pid_only = (0.0, 0.0)
             self._est_vx = 0.0
             self._est_vy = 0.0
             self._cache['aim'].clear()
@@ -991,7 +993,8 @@ class AimPipeline:
                 self._last_output_target_id = None
                 self._last_output_target_pos = None
                 self._prev_aim_pos = None
-                self._prev_pid_output = (0.0, 0.0)
+                self._prev_aim_time = None
+                self._prev_pid_only = (0.0, 0.0)
                 self._est_vx = 0.0
                 self._est_vy = 0.0
                 self._lead_x = 0.0
@@ -1004,42 +1007,47 @@ class AimPipeline:
             # 目标切换时重置速度估计
             if target_id != self._last_output_target_id and self._last_output_target_id is not None:
                 self._prev_aim_pos = None
+                self._prev_aim_time = None
                 self._est_vx = 0.0
                 self._est_vy = 0.0
                 self._lead_x = 0.0
                 self._lead_y = 0.0
 
             # ---- 移动预测：前馈偏移（补偿自身鼠标运动的速度估计） ----
+            # 原理：观测位移 = 真实目标位移 - 我们 PID 鼠标移动造成的画面偏移
+            # 所以：真实速度 ≈ (观测位移 + 上一帧 PID 输出) / dt
+            # 注意：仅用 PID 输出补偿，不含 lead，否则 lead 自我放大形成正反馈
             lead_ff_x = 0.0
             lead_ff_y = 0.0
+            now = time.time()
             if self.kalman_enabled and self.kalman_predict_frames > 0:
-                # 用目标位置变化 + 上一帧PID输出估算真实目标速度
-                # 原理：观测位移 = 真实目标位移 - 我们鼠标移动造成的画面偏移
-                # 所以：真实速度 ≈ 观测位移 + 上一帧鼠标移动
-                if self._prev_aim_pos is not None:
-                    obs_dx = aim_x - self._prev_aim_pos[0]
-                    obs_dy = aim_y - self._prev_aim_pos[1]
-                    # 补偿：我们上一帧的鼠标移动让目标反向偏移
-                    comp_dx = obs_dx + self._prev_pid_output[0]
-                    comp_dy = obs_dy + self._prev_pid_output[1]
-                    # EMA 平滑速度
-                    va = self._vel_smooth
-                    self._est_vx = va * comp_dx + (1.0 - va) * self._est_vx
-                    self._est_vy = va * comp_dy + (1.0 - va) * self._est_vy
+                if self._prev_aim_pos is not None and self._prev_aim_time is not None:
+                    dt = now - self._prev_aim_time
+                    if 0.001 < dt < 0.5:
+                        obs_dx = aim_x - self._prev_aim_pos[0]
+                        obs_dy = aim_y - self._prev_aim_pos[1]
+                        comp_dx = (obs_dx + self._prev_pid_only[0]) / dt
+                        comp_dy = (obs_dy + self._prev_pid_only[1]) / dt
+                        # Clamp to prevent spikes from detection jitter
+                        max_vel = 2000.0
+                        comp_dx = max(-max_vel, min(max_vel, comp_dx))
+                        comp_dy = max(-max_vel, min(max_vel, comp_dy))
+                        va = self._vel_smooth
+                        self._est_vx = va * comp_dx + (1.0 - va) * self._est_vx
+                        self._est_vy = va * comp_dy + (1.0 - va) * self._est_vy
 
                 vel_mag = math.sqrt(self._est_vx * self._est_vx + self._est_vy * self._est_vy)
-                # 死区：低于 0.8 像素/帧 视为静止/抖动
-                if vel_mag > 0.8:
-                    factor = float(self.kalman_predict_frames)
-                    raw_lx = self._est_vx * factor
-                    raw_ly = self._est_vy * factor
+                # 死区：低于 50 像素/秒 视为静止/抖动
+                if vel_mag > 50.0:
+                    lead_time = float(self.kalman_predict_frames) * 0.008
+                    raw_lx = self._est_vx * lead_time
+                    raw_ly = self._est_vy * lead_time
                     lead_mag = math.sqrt(raw_lx * raw_lx + raw_ly * raw_ly)
                     max_lead = 50.0
                     if lead_mag > max_lead:
                         s = max_lead / lead_mag
                         raw_lx *= s
                         raw_ly *= s
-                    # EMA 平滑 lead
                     la = self._lead_smooth
                     self._lead_x = la * raw_lx + (1.0 - la) * self._lead_x
                     self._lead_y = la * raw_ly + (1.0 - la) * self._lead_y
@@ -1050,6 +1058,7 @@ class AimPipeline:
                     self._lead_y *= 0.7
 
                 self._prev_aim_pos = (aim_x, aim_y)
+                self._prev_aim_time = now
 
             nearest['pos'] = (aim_x, aim_y)
             self._last_output_target_id = target_id
@@ -1059,14 +1068,14 @@ class AimPipeline:
             error_y = aim_y - float(cy)
             pid_result = self._compute_pid_move_locked(error_x, error_y, pressed_key_config, auto_y=auto_y, left_pressed_long=left_pressed_long)
 
-            # 记录本帧 PID 输出用于下一帧速度补偿
+            # 记录 PID-only 输出（不含 lead）用于下一帧速度补偿
             if pid_result is not None:
-                self._prev_pid_output = (float(pid_result[0]), float(pid_result[1]))
-                # 将 lead 前馈叠加到 PID 输出
+                self._prev_pid_only = (float(pid_result[0]), float(pid_result[1]))
+                # 将 lead 前馈叠加到最终输出
                 if abs(lead_ff_x) > 0.1 or abs(lead_ff_y) > 0.1:
                     pid_result = (pid_result[0] + lead_ff_x, pid_result[1] + lead_ff_y)
             else:
-                self._prev_pid_output = (0.0, 0.0)
+                self._prev_pid_only = (0.0, 0.0)
             return pid_result
 
     def step_frame(self, frame_payload, pressed_key_config, cfg, center_xy, aim_scope, identify_left, identify_top, model_area, auto_y=False, left_pressed_long=False, debug=False):
