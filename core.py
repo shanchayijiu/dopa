@@ -5712,7 +5712,7 @@ class Valorant:
             return
 
         new_range, (r, g, b), (h_val, s_val, v_val) = result
-        print(f"取色区域: 中心 7x7, 原始取色值: BGR=[{b},{g},{r}], HSV=[{h_val},{s_val},{v_val}]")
+        print(f"取色区域: 对比背景自动分离准星像素, 取色值: BGR=[{b},{g},{r}], HSV=[{h_val},{s_val},{v_val}]")
 
         cfg['hsv_ranges'].append(new_range)
         cfg['active_index'] = len(cfg['hsv_ranges']) - 1

@@ -102,8 +102,8 @@ class CrosshairTracker:
         cfg.setdefault('min_area', 5)
         cfg.setdefault('last_rgb', [0, 0, 0])
         cfg.setdefault('h_tolerance', 10)
-        cfg.setdefault('s_tolerance', 30)
-        cfg.setdefault('v_tolerance', 30)
+        cfg.setdefault('s_tolerance', 40)
+        cfg.setdefault('v_tolerance', 60)
         cfg.setdefault('ema_smooth', 0.4)
         cfg.setdefault('small_pixel_threshold', 150)
         cfg.setdefault('only_when_aiming', True)
@@ -503,30 +503,61 @@ class CrosshairTracker:
 
     def pick_color(self, frame, cfg):
         """
-        在画面中心 7×7 区域取色，返回 (new_hsv_range, rgb, hsv_values) 或 None
+        在画面中心区域取色，通过对比背景自动分离准星像素。
+        返回 (new_hsv_range, rgb, hsv_values) 或 None
         """
         if frame is None:
             return None
         h, w = frame.shape[:2]
         cx, cy = w // 2, h // 2
-        half = 3
-        x1 = max(0, cx - half)
-        x2 = min(w, cx + half + 1)
-        y1 = max(0, cy - half)
-        y2 = min(h, cy + half + 1)
-        region = frame[y1:y2, x1:x2]
+
+        # 取较大区域用于背景参考
+        half_bg = 8  # 17×17
+        bx1 = max(0, cx - half_bg)
+        bx2 = min(w, cx + half_bg + 1)
+        by1 = max(0, cy - half_bg)
+        by2 = min(h, cy + half_bg + 1)
+        region = frame[by1:by2, bx1:bx2].astype(np.float32)
         if region.size == 0:
             return None
 
-        pixels = region.reshape(-1, 3)
-        b, g, r = [int(np.median(pixels[:, ch])) for ch in range(3)]
+        rh, rw = region.shape[:2]
+        rcx, rcy = rw // 2, rh // 2
+
+        # 四角 3×3 作为背景参考（准星不可能在角落）
+        cs = 3
+        corners = np.concatenate([
+            region[:cs, :cs].reshape(-1, 3),
+            region[:cs, -cs:].reshape(-1, 3),
+            region[-cs:, :cs].reshape(-1, 3),
+            region[-cs:, -cs:].reshape(-1, 3),
+        ])
+        bg_color = np.median(corners, axis=0)
+
+        # 中心 5×5 为准星候选区
+        half_fg = 2
+        fg = region[rcy - half_fg:rcy + half_fg + 1,
+                     rcx - half_fg:rcx + half_fg + 1].reshape(-1, 3)
+
+        # 找与背景色差最大的像素
+        diffs = np.sqrt(np.sum((fg - bg_color) ** 2, axis=1))
+        threshold = max(25.0, np.max(diffs) * 0.4)
+        crosshair_mask = diffs > threshold
+
+        if np.any(crosshair_mask):
+            crosshair_pixels = fg[crosshair_mask]
+        else:
+            # 回退：取差异最大的单像素
+            crosshair_pixels = fg[np.argmax(diffs):np.argmax(diffs) + 1]
+
+        b, g, r = [int(np.median(crosshair_pixels[:, ch])) for ch in range(3)]
         hsv_pixel = np.uint8([[[b, g, r]]])
         hsv = cv2.cvtColor(hsv_pixel, cv2.COLOR_BGR2HSV)[0][0]
         h_val, s_val, v_val = int(hsv[0]), int(hsv[1]), int(hsv[2])
 
         h_tol = int(cfg.get('h_tolerance', 10))
-        s_tol = int(cfg.get('s_tolerance', 30))
-        v_tol = int(cfg.get('v_tolerance', 30))
+        s_tol = int(cfg.get('s_tolerance', 40))
+        v_tol = int(cfg.get('v_tolerance', 60))
 
         h_min = h_val - h_tol
         h_max = h_val + h_tol
@@ -585,15 +616,19 @@ class CrosshairTracker:
                     h_hi -= 180
                 s_lo = max(0, sc - s_tol)
                 s_hi = min(255, sc + s_tol)
-                v_lo = max(0, vc - v_tol)
-                v_hi = min(255, vc + v_tol)
+                # 高饱和度时 H+S 已足够区分，自动放宽 V 容差
+                effective_v_tol = v_tol
+                if sc > 80:
+                    effective_v_tol = max(v_tol, 60)
+                v_lo = max(0, vc - effective_v_tol)
+                v_hi = min(255, vc + effective_v_tol)
             else:
                 nr = self.normalize_hsv_range(hr)
                 h_lo, h_hi = nr['h_min'], nr['h_max']
                 s_lo, s_hi = nr['s_min'], nr['s_max']
                 v_lo, v_hi = nr['v_min'], nr['v_max']
-            # Saturation floor: reject gray/near-gray noise pixels
-            s_lo = max(s_lo, 30)
+            # Saturation floor: reject near-gray noise, but keep crosshair pixels
+            s_lo = max(s_lo, 15)
             if h_lo > h_hi:
                 bounds.append((
                     hr,
