@@ -97,6 +97,7 @@ class DualAxisPID:
         self.smooth_y = smooth_params[1]
         self.smooth_deadzone = smooth_params[2]
         self.smooth_algorithm = smooth_params[3] if len(smooth_params) > 3 else 1.0
+        self._tau_x, self._tau_y = self._calc_tau(self.smooth_x, self.smooth_y)
         # ---- 误差滤波 ----
         # 对PID输入误差做EMA平滑，过滤检测框帧间抖动
         self.error_filter_alpha = 0.0    # 0=不滤波(直通), 越大越平滑(0~0.95)
@@ -152,6 +153,18 @@ class DualAxisPID:
             self._d_term[axis] = 0
         return self._p_term[axis] + self._i_term[axis] + self._d_term[axis]
 
+    @staticmethod
+    def _calc_tau(smooth_x, smooth_y):
+        try:
+            tx = float(smooth_x) / 1000.0
+        except (ValueError, TypeError):
+            tx = 0.0
+        try:
+            ty = float(smooth_y) / 1000.0
+        except (ValueError, TypeError):
+            ty = 0.0
+        return tx, ty
+
     def _apply_smoothing(self, x_output, y_output, error_x, error_y, delta_time):
         """
         应用指数平滑算法
@@ -164,11 +177,8 @@ class DualAxisPID:
             self._last_output['y'] = y_output
             return (x_output, y_output)
 
-        try:
-            tau_x = float(self.smooth_x) / 1000.0  # ms to seconds
-            tau_y = float(self.smooth_y) / 1000.0
-        except (ValueError, TypeError):
-            tau_x, tau_y = 0.0, 0.0
+        tau_x = self._tau_x
+        tau_y = self._tau_y
 
         if delta_time <= 0.000001:
             alpha_x, alpha_y = 1.0, 1.0
@@ -336,6 +346,8 @@ class DualAxisPID:
             self.smooth_x = smooth_x
         if smooth_y is not None:
             self.smooth_y = smooth_y
+        if smooth_x is not None or smooth_y is not None:
+            self._tau_x, self._tau_y = self._calc_tau(self.smooth_x, self.smooth_y)
         if smooth_deadzone is not None:
             self.smooth_deadzone = smooth_deadzone
         if smooth_algorithm is not None:
