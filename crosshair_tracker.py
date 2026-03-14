@@ -55,6 +55,8 @@ class CrosshairTracker:
         # ── HSV bounds 缓存 ──
         self._bounds_cache_key = None
         self._bounds_cache = []
+        self._wide_cache_key = None
+        self._wide_cache = []
 
         # ── 回拉参数缓存 ──
         self._pull_sig = None
@@ -213,9 +215,26 @@ class CrosshairTracker:
         cache_key = (ranges_sig, show_active_only, active_index, h_tol, s_tol, v_tol)
         if self._bounds_cache_key != cache_key:
             self._bounds_cache = self._build_bounds(
-                hsv_ranges, show_active_only, active_index, h_tol, s_tol, v_tol)
+                hsv_ranges, show_active_only, active_index, h_tol, s_tol, v_tol,
+                wide=False)
             self._bounds_cache_key = cache_key
         cached = self._bounds_cache
+
+        # 宽容差 bounds（仅当存在高饱和度颜色时才构建，用作窄容差检测失败的回退）
+        has_high_sat = any(
+            isinstance(r, dict) and int(r.get('s_center', 0)) > 80
+            for r in hsv_ranges
+        )
+        if has_high_sat:
+            wide_key = ('w',) + cache_key
+            if self._wide_cache_key != wide_key:
+                self._wide_cache = self._build_bounds(
+                    hsv_ranges, show_active_only, active_index, h_tol, s_tol, v_tol,
+                    wide=True)
+                self._wide_cache_key = wide_key
+            wide_cached = self._wide_cache
+        else:
+            wide_cached = None
 
         # ── inRange ──
         mask = None
@@ -229,6 +248,23 @@ class CrosshairTracker:
             else:
                 cm = cv2.inRange(hsv, lo1, hi1)
             mask = cm if mask is None else cv2.bitwise_or(mask, cm)
+
+        # 窄容差捕获的准星像素不足时，回退到宽容差
+        if wide_cached is not None and mask is not None:
+            mh0, mw0 = mask.shape[:2]
+            qh, qw = max(1, mh0 // 4), max(1, mw0 // 4)
+            if cv2.countNonZero(mask[qh:mh0 - qh, qw:mw0 - qw]) < 5:
+                mask = None
+                for entry in wide_cached:
+                    if entry is None:
+                        continue
+                    _, lo1, hi1, lo2, hi2 = entry
+                    if lo2 is not None:
+                        cm = cv2.bitwise_or(cv2.inRange(hsv, lo1, hi1),
+                                            cv2.inRange(hsv, lo2, hi2))
+                    else:
+                        cm = cv2.inRange(hsv, lo1, hi1)
+                    mask = cm if mask is None else cv2.bitwise_or(mask, cm)
 
         # ── 形态学 ──
         if mask is not None:
@@ -579,7 +615,7 @@ class CrosshairTracker:
     # ────────────────────────────────────────────
 
     def _build_bounds(self, hsv_ranges, show_active_only, active_index,
-                      h_tol=10, s_tol=30, v_tol=30):
+                      h_tol=10, s_tol=30, v_tol=30, wide=False):
         bounds = []
         for i, hr in enumerate(hsv_ranges):
             if show_active_only and i != active_index:
@@ -601,8 +637,8 @@ class CrosshairTracker:
                 s_hi = min(255, sc + s_tol)
                 v_lo = max(0, vc - v_tol)
                 v_hi = min(255, vc + v_tol)
-                if sc > 80:
-                    # 高饱和度准星：H 是主要区分手段，S/V 自动放宽以
+                if wide and sc > 80:
+                    # 宽容差模式：H 是主要区分手段，S/V 自动放宽以
                     # 捕获抗锯齿和混色的边缘像素（可到中心值的 35%）
                     auto_s_lo = max(15, int(sc * 0.35))
                     auto_v_lo = max(15, int(vc * 0.35))
