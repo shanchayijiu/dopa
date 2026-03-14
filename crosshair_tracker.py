@@ -230,10 +230,20 @@ class CrosshairTracker:
             self._last_pixel_count = pixel_count
             small_thresh = int(cfg.get('small_pixel_threshold', 150))
 
-            if self._small_mode:
-                is_small = pixel_count <= int(small_thresh * 1.4)
+            # Use center-region pixel count for small_mode determination.
+            # Prevents background noise at ROI edges (common with green)
+            # from inflating the count and incorrectly exiting small_mode.
+            mh, mw = mask.shape[:2]
+            mx, my = max(1, mw // 4), max(1, mh // 4)
+            if mw > 4 and mh > 4:
+                center_count = cv2.countNonZero(mask[my:mh - my, mx:mw - mx])
             else:
-                is_small = pixel_count <= small_thresh
+                center_count = pixel_count
+
+            if self._small_mode:
+                is_small = center_count <= int(small_thresh * 1.4)
+            else:
+                is_small = center_count <= small_thresh
             self._small_mode = is_small
 
             if is_small:
