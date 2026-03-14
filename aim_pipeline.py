@@ -280,7 +280,7 @@ class AimPipeline:
         self._locked_track_id = None
         self._locked_last_pos = None      # 锁定目标最后已知位置
         self._lock_grace_frames = 0       # 锁定目标消失后的宽限帧计数
-        self._lock_grace_max = 20         # 最大宽限帧数（~300-600ms）
+        self._lock_grace_max = 8          # 最大宽限帧数（~50-130ms）
 
     def reset(self):
         with self._infer_lock:
@@ -730,8 +730,8 @@ class AimPipeline:
                     if d < best_d:
                         best_d = d
                         best_t = t
-                # 距离阈值：上一位置 40px 以内视为同一目标
-                if best_t is not None and best_d < 40.0 * 40.0:
+                # 距离阈值：上一位置 100px 以内视为同一目标（覆盖跳跃场景）
+                if best_t is not None and best_d < 100.0 * 100.0:
                     locked_target = best_t
                     self._locked_track_id = best_t.get('track_id', best_t.get('id'))
 
@@ -998,9 +998,10 @@ class AimPipeline:
                 model_area=model_area,
             )
             if nearest is None:
-                # During lock grace period, hold position instead of full reset
+                # During lock grace period, don't interfere with user mouse
+                # (returning (0,0) would call execute_move and block crosshair pull)
                 if self._locked_track_id is not None and self._lock_grace_frames > 0:
-                    return (0.0, 0.0)
+                    return None
                 self._last_output_target_id = None
                 self._last_output_target_pos = None
                 self._prev_aim_pos = None

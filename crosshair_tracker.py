@@ -334,7 +334,7 @@ class CrosshairTracker:
             if should_log:
                 print("准星找色: 未找到轮廓 (匹配像素可能太少)")
             self._miss_count += 1
-            if self._miss_count >= 3:
+            if self._miss_count >= 5:
                 self._decay(cfg)
             return
 
@@ -359,7 +359,7 @@ class CrosshairTracker:
             if should_log:
                 print("准星找色: 没有符合条件的轮廓")
             self._miss_count += 1
-            if self._miss_count >= 3:
+            if self._miss_count >= 5:
                 self._decay(cfg)
             return
 
