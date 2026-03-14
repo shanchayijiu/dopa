@@ -1934,6 +1934,7 @@ class Valorant:
         self.crosshair_offset = (self._crosshair_ema_x, self._crosshair_ema_y)
         self._crosshair_pull_seq += 1
         self._crosshair_miss_count = 0
+        self._crosshair_last_decay_time = time.perf_counter()
         
         if should_log and (abs(self._crosshair_ema_x) > 1.0 or abs(self._crosshair_ema_y) > 1.0):
              print(f"准星找色: 锁定目标 area={area:.1f}, solidity={best_cnt[5]:.2f}, offset=({self._crosshair_ema_x:.1f}, {self._crosshair_ema_y:.1f})")
@@ -1985,9 +1986,14 @@ class Valorant:
         return result
 
     def _decay_crosshair_offset(self, cfg):
-        """目标丢失时平滑衰减偏移量，而非瞬间归零"""
+        """目标丢失时平滑衰减偏移量（帧率无关），而非瞬间归零"""
         if self._crosshair_ema_initialized:
-            decay = 0.7
+            now = time.perf_counter()
+            last = getattr(self, '_crosshair_last_decay_time', now)
+            dt = now - last
+            self._crosshair_last_decay_time = now
+            # 半衰期 100ms，任何帧率下行为一致
+            decay = 0.5 ** (dt / 0.1) if dt > 0 else 0.7
             self._crosshair_ema_x *= decay
             self._crosshair_ema_y *= decay
             if abs(self._crosshair_ema_x) < 0.3 and abs(self._crosshair_ema_y) < 0.3:
