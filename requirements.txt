@@ -1,0 +1,31 @@
+# DOPA3 核心依赖 — 已在 Python 3.10.20 / Windows x64 验证通过
+#
+# 安装方式（任选其一）：
+#   uv pip install -r requirements.txt --python .venv\Scripts\python.exe
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# 国内用户加速：加 -i https://pypi.tuna.tsinghua.edu.cn/simple
+#
+# 说明：以下为「必装」核心依赖。TensorRT / CuPy / PyCUDA 等 GPU 加速依赖
+# 属可选，需 NVIDIA + CUDA 环境，见 docs/INSTALL.md「可选依赖」一节，不在此清单。
+
+numpy==2.2.6
+opencv-python==5.0.0.93
+onnxruntime-directml==1.23.0
+onnx==1.22.0
+bettercam==1.0.0
+dearpygui==2.3.1
+pynput==1.8.2
+pyclick==0.0.2
+pydirectinput==1.0.4
+scipy==1.15.3
+cryptography==50.0.0
+pycryptodome==3.23.0
+requests==2.34.2
+psutil==7.2.2
+pywin32==312
+wmi==1.5.1
+pillow==12.3.0
+numba==0.66.0
+nicegui==3.15.0
+makcu==2.3.1

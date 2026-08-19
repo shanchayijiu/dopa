@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from v11onnx_support import (
+from inference.v11onnx_support import (
     ModelValidationError,
     build_ort_runtime_components,
     discover_v11onnx_model,
@@ -26,19 +26,7 @@ class _FakeExecMode:
     ORT_PARALLEL = 1
 
 
-class 0100
-    
-    
-    
-    
-    
-    00
-    
-
-
-
-
-akeSessionOptions:
+class _FakeSessionOptions:
     def __init__(self):
         self.intra_op_num_threads = 0
         self.inter_op_num_threads = 0
@@ -128,7 +116,7 @@ class V11OnnxSupportTests(unittest.TestCase):
             "output_shapes": [[1, 84, 8400]],
         }
         try:
-            with mock.patch("v11onnx_support._collect_onnx_metadata", return_value=fake_metadata):
+            with mock.patch("inference.v11onnx_support._collect_onnx_metadata", return_value=fake_metadata):
                 with self.assertRaises(ModelValidationError):
                     validate_v11onnx_model(model_path, expected_opset=11)
         finally:
@@ -153,7 +141,7 @@ class V11OnnxSupportTests(unittest.TestCase):
             "output_shapes": [[1, 84, 8400]],
         }
         try:
-            with mock.patch("v11onnx_support._collect_onnx_metadata", return_value=fake_metadata):
+            with mock.patch("inference.v11onnx_support._collect_onnx_metadata", return_value=fake_metadata):
                 with self.assertRaises(ModelValidationError):
                     validate_v11onnx_model(model_path, expected_model_version=2)
         finally:

@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "C:\Users\Administrator\Desktop\dopa3-1\main.py", line 92, in <module>
-    valorant_instance.start()
-  File "C:\Users\Administrator\Desktop\dopa3-1\core.py", line 1172, in start
-    self.gui()
-  File "C:\Users\Administrator\Desktop\dopa3-1\core.py", line 3957, in gui
-    self.tracking_track_thresh_slider = dpg.add_slider_float(label='高低分阈', min_value=0.0, max_value=1.0, default_value=float(self.config.get('tracking_track_thresh', 0.5)), format='%.2f', callback=self.on_tracking_track_thresh_change, width=self.scaled_width_normal)
-AttributeError: 'Valorant' object has no attribute 'on_tracking_track_thresh_change'. Did you mean: 'on_tracking_iou_threshold_change'?

@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from infer_function import nms_v8
+from inference.infer_function import nms_v8
 
 
 def _build_single_class_pred(layout: str = "c_n", count: int = 16):

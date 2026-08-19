@@ -2,8 +2,8 @@ import unittest
 
 import numpy as np
 
-from infer_function import nms_v8, read_img
-from v11onnx_benchmark import BenchmarkMetrics, compare_metrics, is_within_threshold
+from inference.infer_function import nms_v8, read_img
+from inference.v11onnx_benchmark import BenchmarkMetrics, compare_metrics, is_within_threshold
 
 
 class _FakeOnnxModel:
