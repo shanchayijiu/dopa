@@ -478,13 +478,54 @@ class ScreenshotManager:
                 self._start_capture_pipeline()
                 turbo_status = '强制提速' if getattr(self, 'turbo_mode', False) else '标准'
             if self.config.get('infer_debug', False):
-                if self.enable_parallel_processing:
+                if self.engine is None and self.config.get('single_machine_mode', False):
+                    self.display_thread = Thread(target=self.display_screenshot_preview)
+                elif self.enable_parallel_processing:
                     self.display_thread = Thread(target=self.display_screenshot_separated)
                 else:
                     self.display_thread = Thread(target=self.display_screenshot_simple)
                 self.display_thread.daemon = True
                 self.display_thread.start()
         return success
+
+    def display_screenshot_preview(self):
+        """无推理引擎时显示实时截图，并明确标注当前仅为预览。"""
+        window_name = 'screenshot'
+        window_created = False
+        while self.running:
+            try:
+                screenshot = self.get_screenshot()
+                if screenshot is None:
+                    time.sleep(0.01)
+                    continue
+                if not window_created:
+                    cv2.namedWindow(
+                        window_name,
+                        cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO | cv2.WINDOW_GUI_EXPANDED,
+                    )
+                    cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+                    height, width = screenshot.shape[:2]
+                    cv2.resizeWindow(window_name, width, height)
+                    window_created = True
+                    print(f'单机预览窗口已启动: {width}x{height}（推理引擎未加载）')
+                preview = np.array(screenshot, copy=True)
+                cv2.putText(
+                    preview,
+                    'INFERENCE ENGINE NOT LOADED',
+                    (10, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (0, 0, 255),
+                    2,
+                )
+                cv2.imshow(window_name, preview)
+                cv2.waitKey(1)
+            except Exception as e:
+                if self.running:
+                    with open('error_log.txt', 'a', encoding='utf-8') as f:
+                        f.write('[单机预览窗口异常] ' + str(e) + '\n' + traceback.format_exc() + '\n')
+                    print(f'单机预览窗口异常: {e}')
+                time.sleep(0.05)
 
     def init_bettercam(self):
         """
@@ -502,10 +543,21 @@ class ScreenshotManager:
                 self.bettercam_capture.stop()
                 del self.bettercam_capture
                 self.bettercam_capture = None
-            if self.engine is None:
+            if self.engine is not None:
+                width = self.engine.get_input_shape()[3]
+                height = self.engine.get_input_shape()[2]
+            elif self.config.get('single_machine_mode', False):
+                capture_size = self.config.get('single_machine_capture_size', '320x320')
+                try:
+                    width, height = (
+                        int(value.strip()) for value in str(capture_size).lower().split('x', 1)
+                    )
+                except (TypeError, ValueError):
+                    print(f'单机截图尺寸无效: {capture_size!r}，使用默认尺寸 320x320')
+                    width, height = 320, 320
+                print(f'单机测试模式：无推理引擎，使用截图尺寸 {width}x{height}')
+            else:
                 return False
-            width = self.engine.get_input_shape()[3]
-            height = self.engine.get_input_shape()[2]
             if width <= 0 or height <= 0:
                 print(f'BetterCam初始化失败: 无效的模型输入尺寸 {width}x{height}')
                 return False

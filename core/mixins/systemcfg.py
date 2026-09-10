@@ -363,3 +363,10 @@ class SystemConfigMixin:
     def on_move_method_change(self, sender, app_data):
         self.config['move_method'] = app_data
         print(f"changed to: {self.config['move_method']}")
+
+    def on_single_machine_mode_change(self, sender, app_data):
+        """切换单机测试模式；输入后端在下一次启动时应用。"""
+        self.config['single_machine_mode'] = bool(app_data)
+        mode = '开启' if self.config['single_machine_mode'] else '关闭'
+        print(f'单机测试模式已{mode}，下次启动时生效')
+        self.save_config()

@@ -184,6 +184,8 @@ class GUIMixin:
                                 dpg.add_input_text(label='采集卡分辨率', default_value=self.config['cjk_resolution'], callback=self.on_cjk_resolution_change, width=self.scaled_width_medium)
                                 dpg.add_input_text(label='采集卡裁剪尺寸', default_value=self.config['cjk_crop_size'], callback=self.on_cjk_crop_size_change, width=self.scaled_width_medium)
                             dpg.add_input_text(label='视频编码格式', default_value=self.config.get('cjk_fourcc_format', 'NV12'), callback=self.on_cjk_fourcc_format_change, width=self.scaled_width_medium, hint='如: NV12, MJPG, YUYV')
+                            dpg.add_checkbox(label='单机测试模式', default_value=self.config.get('single_machine_mode', False), callback=self.on_single_machine_mode_change)
+                            dpg.add_text('开启后启动时强制使用本机 send_input，跳过外置输入设备；修改后下次启动生效。', color=(150, 150, 150), wrap=self.scaled_width_xlarge)
                             dpg.add_text('目标选择器')
                             with dpg.group(horizontal=True):
                                 self.target_sticky_pixels_slider = dpg.add_slider_float(label='目标黏性(px)', default_value=float(self.config.get('target_sticky_pixels', 40.0)), min_value=0.0, max_value=120.0, format='%.0f', callback=self.on_target_sticky_pixels_change, width=self.scaled_width_normal)

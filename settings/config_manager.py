@@ -38,6 +38,8 @@ def get_default_config():
         },
         'performance_mode': 'balanced',
         'use_async_move': False,
+        'single_machine_mode': False,
+        'single_machine_capture_size': '320x320',
         'frame_skip_ratio': 0,
         'cpu_optimization': True,
         'memory_optimization': True,
@@ -135,6 +137,8 @@ def ensure_defaults(config):
     config.setdefault('skip_frame_processing', True)
     config.setdefault('performance_mode', 'balanced')
     config.setdefault('use_async_move', False)
+    config.setdefault('single_machine_mode', False)
+    config.setdefault('single_machine_capture_size', '320x320')
     config.setdefault('frame_skip_ratio', 0)
     config.setdefault('cpu_optimization', True)
     config.setdefault('memory_optimization', True)

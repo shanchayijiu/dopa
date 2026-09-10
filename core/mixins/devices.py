@@ -451,7 +451,10 @@ class DeviceMixin:
             self.makcu_listen_switch = False
             self.unmask_all()
             move_method = self.config.get('move_method')
-            if move_method == 'makcu':
+            if self.config.get('single_machine_mode', False):
+                # 单机模式没有初始化外置设备，无需执行设备级清理。
+                pass
+            elif move_method == 'makcu':
                 if getattr(self, 'makcu', None) is not None:
                     try:
                         try:
@@ -505,6 +508,8 @@ class DeviceMixin:
 
     def unmask_all(self):
         """解除所有屏蔽"""
+        if self.config.get('single_machine_mode', False):
+            return
         if self.config['move_method'] == 'makcu':
             if self.makcu is not None:
                 try:
@@ -534,6 +539,14 @@ class DeviceMixin:
 
 
     def init_mouse(self):
+        if self.config.get('single_machine_mode', False):
+            print('单机测试模式：使用本机 send_input，跳过外置设备初始化')
+            self.move_dll = None
+            self.move_r = pydirectinput.moveRel
+            listen_thread = Thread(target=self.start_listen)
+            listen_thread.setDaemon(True)
+            listen_thread.start()
+            return
         try:
             if self.config['move_method'] == 'makcu':
                 if not self._setup_makcu():
@@ -665,7 +678,7 @@ class DeviceMixin:
             listen_thread = Thread(target=self.start_listen_catbox)
         else:
             listen_thread = Thread(target=self.start_listen)
-        listen_thread.setDaemon(True)
+        listen_thread.daemon = True
         listen_thread.start()
 
 

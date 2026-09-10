@@ -24,7 +24,6 @@ from settings import config_manager as cfgmgr
 import pydirectinput
 pydirectinput.PAUSE = 0
 pydirectinput.FAILSAFE = False
-import requests
 import win32api
 import win32con
 import win32gui
@@ -113,7 +112,6 @@ def detect_inference_devices():
         return ['CPU'], {'CPU': {'provider': 'CPUExecutionProvider', 'description': 'CPU推理 (默认)', 'performance': '标准'}}
 
 from settings.buff import Buff_Single, Buff_User
-from settings.remote_config import get_remote_config, save_remote_config, is_remote_config_loaded
 from devices.dhz import DHZBOX
 from util.gui_handlers import ConfigChangeHandler, ConfigItemGroup
 from util.profiler import FrameProfiler
@@ -611,6 +609,9 @@ class Valorant(VerifyMixin, DeviceMixin, InputListenerMixin, InferenceMixin, Per
             print('初始化截图源失败')
             return False
         self.init_mouse()
+        if self.engine is None:
+            print('推理引擎未加载：截图源和输入设备已初始化，推理/扳机线程保持待机')
+            return True
         if self.timer_id!= 0:
             self.time_kill_event(self.timer_id)
             self.timer_id = 0

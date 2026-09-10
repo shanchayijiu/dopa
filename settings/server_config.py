@@ -1,4 +1,13 @@
-REMOTE_CONFIG_SERVER_URL = 'http://127.0.0.1:2028'
-ENCRYPTION_KEY = 'huiyestudio'
-REQUEST_TIMEOUT = 10
+# -*- coding: utf-8 -*-
+
+
+REMOTE_CONFIG_SERVER_URL = ''
+
+
+ENCRYPTION_KEY = 'ZTX'
+
+
+REQUEST_TIMEOUT = 2
+
+
 DEBUG_MODE = False

@@ -41,10 +41,10 @@
     "group": "sjz",
     "picked_game": "cs2",
     "down_switch_key": "f5",
-    "is_obs": true,
-    "obs_ip": "169.254.80.4",
+    "is_obs": false,
+    "obs_ip": "192.168.1.41",
     "obs_port": 6666,
-    "obs_fps": 1000,
+    "obs_fps": 144,
     "is_cjk": false,
     "cjk_device_id": 0,
     "cjk_fps": 240,
@@ -423,7 +423,7 @@
             "model_variant": "v8onnx"
         },
         "sjz": {
-            "infer_model": "C:/Users/Administrator/Desktop/123/3.12/dopa/models/sjz320v8.engine",
+            "infer_model": "C:\\Users\\Administrator\\Desktop\\dopa\\models\\sjz320v8.engine",
             "auto_y": true,
             "long_press_duration": 0,
             "right_down": false,
@@ -787,7 +787,7 @@
                 }
             },
             "is_v8": true,
-            "is_trt": true,
+            "is_trt": false,
             "original_infer_model": "C:/Users/Administrator/Desktop/models/sjz320v8.onnx",
             "model_variant": "tensorrt_engine"
         }
@@ -1389,5 +1389,6 @@
     "kalman": {
         "enabled": false,
         "predict_frames": 1
-    }
+    },
+    "single_machine_mode": true
 }

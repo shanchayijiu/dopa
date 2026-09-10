@@ -11,13 +11,30 @@ import copy
 import random
 from settings import config_manager as cfgmgr
 from util.gui_handlers import ConfigItemGroup, ConfigChangeHandler
-from inference.v11onnx_support import should_use_v11onnx
 from inference.v11onnx_support import should_use_v11onnx, infer_model_variant_from_path
 from ..runtime import TENSORRT_AVAILABLE
 
 
 class ConfigMixin:
     """配置管理 Mixin。"""
+
+    @staticmethod
+    def _resolve_model_path(model_path):
+        """解析可迁移的模型路径，兼容旧配置中的失效绝对路径。"""
+        if not isinstance(model_path, str) or not model_path:
+            return model_path
+
+        expanded_path = os.path.abspath(os.path.expandvars(os.path.expanduser(model_path)))
+        if os.path.isfile(expanded_path):
+            return expanded_path
+
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        candidate = os.path.join(project_root, 'models', os.path.basename(model_path))
+        if os.path.isfile(candidate):
+            print(f'模型路径已迁移: {model_path} -> {candidate}')
+            return candidate
+
+        return model_path
 
     def build_config(self):
         """\n        构建配置并返回相关参数\n        \n        处理TRT相关路径设置并获取当前组的按键配置\n        \n        Returns:\n            tuple: (config, aim_keys_dist, aim_keys, group) 配置字典、按键配置字典、按键列表和当前组名\n        """
@@ -43,6 +60,9 @@ class ConfigMixin:
                 group_val['is_trt'] = False
             if 'is_v8' not in group_val:
                 group_val['is_v8'] = False
+            for model_key in ('infer_model', 'original_infer_model'):
+                if model_key in group_val:
+                    group_val[model_key] = self._resolve_model_path(group_val[model_key])
             current_model = group_val.get('infer_model', '')
             if 'model_variant' not in group_val:
                 group_val['model_variant'] = infer_model_variant_from_path(
@@ -246,6 +266,7 @@ class ConfigMixin:
         screenshot_group = ConfigItemGroup(self.config_handler)
         screenshot_group.register_item('is_obs', 'is_obs', bool, lambda: self.screenshot_manager.update_config('is_obs', self.config['is_obs']) if self.screenshot_manager else None)
         screenshot_group.register_item('is_cjk', 'is_cjk', bool, lambda: self.screenshot_manager.update_config('is_cjk', self.config['is_cjk']) if self.screenshot_manager else None)
+        screenshot_group.register_item('single_machine_capture_size', 'single_machine_capture_size', str, lambda: self.screenshot_manager.update_config('single_machine_capture_size', self.config['single_machine_capture_size']) if self.screenshot_manager else None)
         screenshot_group.register_item('obs_ip', 'obs_ip', str, lambda: self.screenshot_manager.update_config('obs_ip', self.config['obs_ip']) if self.screenshot_manager else None)
         screenshot_group.register_item('obs_port', 'obs_port', int, lambda: self.screenshot_manager.update_config('obs_port', self.config['obs_port']) if self.screenshot_manager else None)
         screenshot_group.register_item('obs_fps', 'obs_fps', int, lambda: self.screenshot_manager.update_config('obs_fps', self.config['obs_fps']) if self.screenshot_manager else None)
@@ -275,6 +296,7 @@ class ConfigMixin:
         move_group.register_item('dhz_random', 'dhz_random', bool)
         move_group.register_item('km_com', 'km_com', str)
         move_group.register_item('move_method', 'move_method', str)
+        move_group.register_item('single_machine_mode', 'single_machine_mode', bool)
         key_group = ConfigItemGroup(self.config_handler)
         key_group.register_item('group', 'group', str, self.update_group_inputs)
         aim_key_group = ConfigItemGroup(self.config_handler, 'groups.{group}.aim_keys.{key}')

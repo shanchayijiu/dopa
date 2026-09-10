@@ -14,6 +14,10 @@ import os
 import numpy as np
 from PIL import Image
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DLL_DIR = os.path.join(PROJECT_ROOT, 'dll')
+_DLL_DIRECTORY_HANDLES = []
+
 VERSION = 'v2.1.5'
 UPDATE_TIME = '2025-11-04'
 
@@ -28,14 +32,14 @@ def register_dll_directory():
 
     Must run before TensorRT detection so bundled nvinfer*.dll is discoverable.
     """
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    dll_path = os.path.join(current_dir, 'dll')
+    dll_path = DLL_DIR
     if not os.path.isdir(dll_path):
         return dll_path
     os.environ['PATH'] = dll_path + os.pathsep + os.environ.get('PATH', '')
     if hasattr(os, 'add_dll_directory'):
         try:
-            os.add_dll_directory(dll_path)
+            handle = os.add_dll_directory(dll_path)
+            _DLL_DIRECTORY_HANDLES.append(handle)
         except OSError:
             pass
     return dll_path

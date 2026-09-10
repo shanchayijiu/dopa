@@ -11,14 +11,21 @@ import sys
 import traceback
 import shutil
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DLL_DIR = os.path.join(PROJECT_ROOT, 'dll')
+_DLL_DIRECTORY_HANDLES = []
+
 
 def _add_local_dll_dir():
     """将项目 dll/ 目录添加到 DLL 搜索路径，确保加载正确版本的 nvinfer。"""
-    dll_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dll')
+    dll_dir = DLL_DIR
     if os.path.isdir(dll_dir):
-        os.add_dll_directory(dll_dir)
+        if hasattr(os, 'add_dll_directory'):
+            handle = os.add_dll_directory(dll_dir)
+            _DLL_DIRECTORY_HANDLES.append(handle)
         # 同时前置到 PATH，兼容旧版 ctypes 加载逻辑
-        os.environ['PATH'] = dll_dir + ';' + os.environ.get('PATH', '')
+        os.environ['PATH'] = dll_dir + os.pathsep + os.environ.get('PATH', '')
+    return dll_dir
 
 
 _add_local_dll_dir()
@@ -37,7 +44,7 @@ def _import_cuda_driver():
 def _find_trtexec() -> str:
     """定位 trtexec 可执行文件，优先使用项目 dll/ 目录下的版本。"""
     # 1. 项目 dll/ 目录
-    local = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dll', 'trtexec.exe')
+    local = os.path.join(DLL_DIR, 'trtexec.exe')
     if os.path.isfile(local):
         return local
     # 2. PATH 中查找

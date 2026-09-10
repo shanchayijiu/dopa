@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
-import requests
 import base64
 import os
-from cryptography.fernet import Fernet  # 原文件有导入，保留（即便当前未直接使用）
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
-import hashlib
 import time
 import threading
 
@@ -14,7 +11,7 @@ import threading
 try:
     from .server_config import REMOTE_CONFIG_SERVER_URL, ENCRYPTION_KEY, REQUEST_TIMEOUT, DEBUG_MODE
 except ImportError:
-    REMOTE_CONFIG_SERVER_URL = 'http://ztx.ztxfkw.top'
+    REMOTE_CONFIG_SERVER_URL = ''
     ENCRYPTION_KEY = 'ZTX'
     REQUEST_TIMEOUT = 10
     DEBUG_MODE = True
@@ -34,9 +31,7 @@ class RemoteConfigManager:
         self.request_timeout = REQUEST_TIMEOUT
         self.debug_mode = DEBUG_MODE
 
-        self.card_key = None
         self.config_data = None
-        self.local_config_file = 'config.json'  # 仅存储 card_key
         self.cfg_file = 'cfg.json'              # 存储解密后的配置
         self.user_cards_id = None
 
@@ -167,52 +162,17 @@ class RemoteConfigManager:
         return headers
 
     def _start_heartbeat(self):
-        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
-            return
-        self._heartbeat_stop.clear()
-        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
-        self._heartbeat_thread.start()
-        if self.debug_mode:
-            print('[HB] 心跳线程已启动')
-
-    def _stop_heartbeat(self):
-        self._heartbeat_stop.set()
-        if self._heartbeat_thread:
-            self._heartbeat_thread.join(timeout=0.1)
+        # Offline mode: heartbeat disabled
+        pass
 
     def _heartbeat_loop(self):
-        interval = 60
-        while not self._heartbeat_stop.is_set():
-            try:
-                with self._token_lock:
-                    token = self._token
-                    token_exp = self._token_exp
-                if not token:
-                    time.sleep(interval)
-                    continue
-                # 是否接近过期（<5 分钟）
-                near = (token_exp and token_exp - int(time.time()) < 300)
-                if self.debug_mode:
-                    left = token_exp - int(time.time()) if token_exp else -1
-                    print(f"[HB] {'即将过期，续期' if near else '心跳续期'}，剩余={left}s")
-                self._renew_token()
-            except Exception as e:
-                if self.debug_mode:
-                    print(f"[HB] 心跳失败: {e}")
-            finally:
-                time.sleep(interval)
+        # Offline mode: heartbeat disabled
+        pass
 
     def _renew_token(self):
-        url = f"{self.server_url}/heartbeat.php"
-        response = requests.post(url, json={}, headers=self._auth_headers(), timeout=self.request_timeout)
-        response.raise_for_status()
-        res = response.json()
-        if res.get('success') and res.get('token'):
-            self._apply_token(res['token'])
-        elif self.debug_mode:
-            print(f"[HB] 心跳续期失败: {res}")
+        # Offline mode: token renewal disabled
+        pass
 
-    # ---------- 本地读写 ----------
     def read_local_cfg(self):
         """读取本地 cfg.json（解密后的配置缓存）。"""
         try:
@@ -223,192 +183,24 @@ class RemoteConfigManager:
                     return config
         except Exception as e:
             print(f"读取本地 cfg 失败: {e}")
-        return None
-
-    def read_local_card_key(self):
-        """从 config.json 读取卡密。"""
-        try:
-            if os.path.exists(self.local_config_file):
-                with open(self.local_config_file, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    return config.get('card_key', None)
-        except Exception as e:
-            print(f"读取本地卡密失败: {e}")
-        return None
-
-    def save_local_card_key(self, card_key: str) -> bool:
-        """把卡密保存到 config.json。"""
-        try:
-            with open(self.local_config_file, 'w', encoding='utf-8') as f:
-                json.dump({'card_key': card_key}, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            print(f"保存本地卡密失败: {e}")
-            return False
-
-    def write_local_config(self, card_key: str, config_data: dict) -> bool:
-        """把解密后的 cfg 保存到 cfg.json。"""
-        try:
-            with open(self.cfg_file, 'w', encoding='utf-8') as f:
-                json.dump(config_data, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            print(f"保存本地 cfg 失败: {e}")
-            return False
-
     # ---------- 远程交互 ----------
-    def get_remote_config(self, card_key: str):
-        """
-        拉取并解密服务器配置：
-        POST {server}/index.php  { card_key, hwid }
-        响应：{ success, config(Base64[AES_CBC(iv+ct)]), data{token?, user_cards_id?}, ... }
-        """
+    def get_remote_config(self):
+        """本地加载配置，不进行网络请求。"""
         if self.debug_mode:
-            print(f"[info] get_remote_config")
+            print("[info] get_remote_config (offline mode)")
+        cfg = self.read_local_cfg()
+        if cfg:
+            self.config_data = cfg
+        return cfg
 
-        try:
-            url = f"{self.server_url}/index.php"
-            hwid = None
-            try:
-                from .buff import Buff_Single
-                hwid = Buff_Single().GetMacCode()
-                if self.debug_mode:
-                    print(f"[info] get_remote_config: hwid={hwid}")
-            except Exception as e:
-                if self.debug_mode:
-                    print(f"获取 Buff 机器码失败，回退到系统信息: {e}")
-                if USER_INFO_AVAILABLE:
-                    try:
-                        hwid = get_system_info().get('hwid')
-                    except Exception as e:
-                        print(f'获取系统hwid失败: {e}')
-            if not hwid:
-                hwid = 'unknown'
-            self._hwid = hwid
-
-            req = {'card_key': card_key, 'hwid': hwid}
-            headers = {'Content-Type': 'application/json'}
-            if self.debug_mode:
-                print(f"[CFG] 请求远程配置: url={url}, hwid={hwid}")
-
-            resp = requests.post(url, json=req, headers=headers, timeout=self.request_timeout)
-            resp.raise_for_status()
-            result = resp.json()
-
-            if not result.get('success', False):
-                print(f"获取配置失败: {result.get('message', '未知错误')}")
-                return None
-
-            enc_cfg = result.get('config')
-            if not enc_cfg:
-                print('服务器返回的配置数据为空')
-                return None
-
-            dec = self._decrypt_data(enc_cfg)
-            if not dec:
-                print('配置解密失败')
-                return None
-
-            cfg = json.loads(dec)
-
-            # 卡密一致性校验
-            if cfg.get('card_key') != card_key:
-                print('配置中的卡密与输入的卡密不一致！')
-                return None
-
-            # 令牌
-            self._set_token_from_response(result)
-            if self.debug_mode:
-                print(f"[AUTH] 服务器返回令牌: {'有' if self._token else '无'}")
-
-            # 用户信息
-            user_data = result.get('data', {}) or {}
-            if 'user_cards_id' in user_data:
-                self.user_cards_id = user_data['user_cards_id']
-                if USER_INFO_AVAILABLE:
-                    init_user_info_manager(card_key, self.user_cards_id, self.server_url)
-                    record_config_download()
-
-            # 心跳
-            self._start_heartbeat()
-            return cfg
-
-        except requests.RequestException as e:
-            print(f"网络请求失败: {e}")
-            return None
-        except json.JSONDecodeError as e:
-            print(f"JSON 解析失败: {e}")
-            return None
-        except Exception as e:
-            print(f"获取远程配置失败: {e}")
-            return None
-
-    def upload_config(self, card_key: str, config_data: dict) -> bool:
-        """
-        加密并上传配置到服务器：
-        POST {server}/upload.php  { card_key, config(enc), action='upload', hwid }
-        成功则记录上传操作
-        """
-        try:
-            # 附带卡密到上传数据（与服务器约定）
-            payload_for_encrypt = dict(config_data)
-            payload_for_encrypt['card_key'] = card_key
-            cfg_json = json.dumps(payload_for_encrypt, ensure_ascii=False, separators=(',', ':'))
-
-            enc = self._encrypt_data(cfg_json)
-            if not enc:
-                print('配置加密失败')
-                return False
-
-            url = f"{self.server_url}/upload.php"
-            hwid = self._hwid
-            if not hwid:
-                try:
-                    from .buff import Buff_Single
-                    hwid = Buff_Single().GetMacCode()
-                except Exception as e:
-                    if self.debug_mode:
-                        print(f"获取 Buff 机器码失败: {e}")
-                    hwid = 'unknown'
-
-            data = {'card_key': card_key, 'config': enc, 'action': 'upload', 'hwid': hwid}
-            if self.debug_mode:
-                print(f"[CFG] 上传配置，携带Authorization: {bool(self._token)}")
-
-            resp = requests.post(url, json=data, headers=self._auth_headers(), timeout=self.request_timeout)
-            resp.raise_for_status()
-            result = resp.json()
-            if self.debug_mode:
-                print(f"保存配置服务器响应: {result}")
-
-            if result.get('success', False):
-                if USER_INFO_AVAILABLE:
-                    try:
-                        user_data = result.get('data', {}) or {}
-                        if 'user_cards_id' in user_data and (not self.user_cards_id):
-                            self.user_cards_id = user_data['user_cards_id']
-                            init_user_info_manager(card_key, self.user_cards_id, self.server_url)
-                        record_config_upload()
-                    except Exception as e:
-                        if self.debug_mode:
-                            print(f"记录上传操作失败: {e}")
-                return True
-            else:
-                print(f"配置上传失败: {result.get('message', '未知错误')}")
-                return False
-
-        except requests.RequestException as e:
-            print(f"网络请求失败: {e}")
-            return False
-        except json.JSONDecodeError as e:
-            print(f"JSON 解析失败: {e}")
-            return False
-        except Exception as e:
-            print(f"上传配置失败: {e}")
-            return False
+    def upload_config(self, config_data: dict) -> bool:
+        """本地保存配置，不进行网络请求。"""
+        if self.debug_mode:
+            print("[info] upload_config (offline mode)")
+        return self.save_config(config_data)
 
     # ---------- 高层入口 ----------
-    def validate_and_load_config(self, card_key: str = None) -> bool:
+    def validate_and_load_config(self) -> bool:
         """
         跳过网络验证，直接读取本地cfg.json配置
         """
@@ -440,8 +232,10 @@ class RemoteConfigManager:
             print(f"正在保存配置到本地文件，配置数据大小: {len(json.dumps(config_data, ensure_ascii=False))} 字符")
 
         try:
-            # 直接写入本地配置文件
-            with open('cfg.json', 'w', encoding='utf-8') as f:
+            # 始终与 read_local_cfg 使用同一路径；自定义路径时自动创建父目录。
+            cfg_dir = os.path.dirname(os.path.abspath(self.cfg_file))
+            os.makedirs(cfg_dir, exist_ok=True)
+            with open(self.cfg_file, 'w', encoding='utf-8') as f:
                 json.dump(config_data, f, ensure_ascii=False, indent=4)
             
             # 更新内存中的配置
@@ -475,51 +269,3 @@ def save_remote_config(config_data):
 
 def is_remote_config_loaded():
     return remote_config_manager.is_config_loaded()
-
-
-# ---------- 附：卡密校验（保持原逻辑/接口） ----------
-def DecryptCard(iCard: str, iMacCode: str) -> bool:
-    """
-    安全版 AES-256-CBC 解密验证函数。
-    - 固定密钥: b'huiyestudio' → 填充至 32 字节
-    - 固定 IV: 16 字节 0x00
-    - PKCS7 填充
-    - 输入 iCard 为 Base64 编码的纯密文（不含 IV）
-    - 任何错误均返回 False
-    """
-    try:
-        if not isinstance(iCard, str) or not isinstance(iMacCode, str):
-            return False
-        if not iCard or not iMacCode:
-            return False
-
-        key = b'huiyestudio'
-        if len(key) < 32:
-            key = key + b'\x00' * (32 - len(key))
-        else:
-            key = key[:32]
-
-        iv = b'\x00' * 16
-        ciphertext = base64.b64decode(iCard)
-
-        if len(ciphertext) == 0 or len(ciphertext) % 16 != 0:
-            return False
-
-        cipher = AES.new(key, AES.MODE_CBC, iv)
-        decrypted = cipher.decrypt(ciphertext)
-
-        pad_len = decrypted[-1]
-        if not (1 <= pad_len <= 16):
-            return False
-        if len(decrypted) < pad_len:
-            return False
-        if decrypted[-pad_len:] != bytes([pad_len]) * pad_len:
-            return False
-
-        plaintext = decrypted[:-pad_len].decode('utf-8')
-        return plaintext == iMacCode
-
-    except (ValueError, TypeError, UnicodeDecodeError, MemoryError, OverflowError):
-        return False
-    except Exception:
-        return False

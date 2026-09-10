@@ -12,9 +12,13 @@ import kmNet
 
 class MouseMaskMixin:
     """鼠标按键屏蔽 Mixin。km_net/catbox/dhz 三种 move_method 的屏蔽回调。"""
+    def _external_mask_enabled(self):
+        """单机模式下禁止调用外置设备屏蔽 API。"""
+        return not self.config.get('single_machine_mode', False)
+
     def on_mask_left_change(self, sender, app_data):
         self.config['mask_left'] = app_data
-        if self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
+        if self._external_mask_enabled() and self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_left(1)
@@ -31,7 +35,7 @@ class MouseMaskMixin:
 
     def on_mask_right_change(self, sender, app_data):
         self.config['mask_right'] = app_data
-        if self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
+        if self._external_mask_enabled() and self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_right(1)
@@ -48,7 +52,7 @@ class MouseMaskMixin:
 
     def on_mask_middle_change(self, sender, app_data):
         self.config['mask_middle'] = app_data
-        if self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
+        if self._external_mask_enabled() and self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_middle(1)
@@ -65,7 +69,7 @@ class MouseMaskMixin:
 
     def on_mask_side1_change(self, sender, app_data):
         self.config['mask_side1'] = app_data
-        if self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
+        if self._external_mask_enabled() and self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_side1(1)
@@ -82,7 +86,7 @@ class MouseMaskMixin:
 
     def on_mask_side2_change(self, sender, app_data):
         self.config['mask_side2'] = app_data
-        if self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
+        if self._external_mask_enabled() and self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_side2(1)
@@ -99,7 +103,7 @@ class MouseMaskMixin:
 
     def on_mask_x_change(self, sender, app_data):
         self.config['mask_x'] = app_data
-        if self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
+        if self._external_mask_enabled() and self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_x(1)
@@ -116,7 +120,7 @@ class MouseMaskMixin:
 
     def on_mask_y_change(self, sender, app_data):
         self.config['mask_y'] = app_data
-        if self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
+        if self._external_mask_enabled() and self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_y(1)
@@ -133,7 +137,7 @@ class MouseMaskMixin:
 
     def on_mask_wheel_change(self, sender, app_data):
         self.config['mask_wheel'] = app_data
-        if self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
+        if self._external_mask_enabled() and self.config['move_method'] in ['km_net', 'dhz', 'catbox']:
             if app_data:
                 if self.config['move_method'] == 'dhz':
                     self.dhz.mask_wheel(1)

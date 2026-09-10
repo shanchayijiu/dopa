@@ -33,6 +33,22 @@ from ..runtime import TENSORRT_AVAILABLE, TensorRTInferenceEngine, ensure_engine
 from util.diagnostics import note_suppressed
 
 
+def _find_onnx_fallback(group_cfg, engine_path):
+    """为 TensorRT engine 查找可由 ONNX Runtime 加载的真实回退模型。"""
+    candidates = [
+        group_cfg.get('original_infer_model'),
+        os.path.splitext(engine_path)[0] + '.onnx',
+    ]
+    for candidate in candidates:
+        if (
+            isinstance(candidate, str)
+            and candidate.lower().endswith('.onnx')
+            and os.path.isfile(candidate)
+        ):
+            return candidate
+    return None
+
+
 class InferenceMixin:
     """推理调度 Mixin。
 
@@ -638,6 +654,23 @@ class InferenceMixin:
         if not os.path.exists(model_path):
             print(f'模型文件不存在: {model_path}')
             return
+        # build_config 可能已经因 TensorRT 不可用而清除了 is_trt；仍需按文件
+        # 类型拦截，避免把 TensorRT .engine 二进制误交给 ONNX Runtime。
+        if model_path.lower().endswith('.engine') and not TENSORRT_AVAILABLE:
+            fallback_path = _find_onnx_fallback(group_cfg, model_path)
+            self.engine = None
+            self._cached_model_area = None
+            group_cfg['is_trt'] = False
+            if fallback_path is None:
+                print(
+                    'TensorRT不可用，且未找到可用的ONNX原始模型；'
+                    'GUI将继续运行，但推理引擎未加载'
+                )
+                return None
+            model_path = fallback_path
+            group_cfg['infer_model'] = fallback_path
+            group_cfg['original_infer_model'] = fallback_path
+            print(f'已自动切换为ONNX模型: {fallback_path}')
         if is_trt and (not TENSORRT_AVAILABLE):
             is_trt = False
             group_cfg['is_trt'] = False
