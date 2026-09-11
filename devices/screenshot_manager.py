@@ -231,6 +231,7 @@ class ScreenshotManager:
         self.bettercam_capture = None
         self.obs = None
         self.cjk_device = None
+        self.virtual_game = None
         self.enable_parallel_processing = config.get('enable_parallel_processing', True)
         if self.enable_parallel_processing:
             self.performance_monitor = PerformanceMonitor()
@@ -383,6 +384,8 @@ class ScreenshotManager:
     def _get_raw_screenshot(self) -> Optional[np.ndarray]:
         """获取原始截图 - 统一接口，支持帧复用"""
         try:
+            if getattr(self, 'virtual_game', None) is not None:
+                return self.virtual_game.get_frame()
             if self.config.get('is_cjk', False) and self.cjk_device:
                 return self._get_cjk_frame_separated()
             if self.config.get('is_obs', False) and self.obs:
@@ -467,7 +470,9 @@ class ScreenshotManager:
         根据配置初始化所有启用的截图源并启动处理管道
         """
         success = False
-        if self.config.get('is_cjk', False):
+        if self.config.get('virtual_test', False):
+            success = self.init_virtual()
+        elif self.config.get('is_cjk', False):
             success = self.init_cjk_device()
         elif self.config.get('is_obs', False):
             success = self.init_obs()
@@ -526,6 +531,20 @@ class ScreenshotManager:
                         f.write('[单机预览窗口异常] ' + str(e) + '\n' + traceback.format_exc() + '\n')
                     print(f'单机预览窗口异常: {e}')
                 time.sleep(0.05)
+
+    def init_virtual(self):
+        """测试用虚拟帧源：绑定同进程的虚拟游戏。"""
+        try:
+            from sim.virtual_game import get_shared_game
+            self.virtual_game = get_shared_game()
+            if self.virtual_game is None:
+                print('虚拟测试：未找到虚拟游戏实例')
+                return False
+            print('虚拟测试：使用虚拟游戏帧源')
+            return True
+        except Exception as e:
+            print(f'虚拟帧源初始化失败: {e}')
+            return False
 
     def init_bettercam(self):
         """

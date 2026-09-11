@@ -25,3 +25,8 @@ Desktop.ini
 
 # 日志
 error_log.txt
+logs/
+tensorrt_error.txt
+
+# opencode plans/state
+.opencode/

@@ -10,9 +10,10 @@ import socket
 import dearpygui.dearpygui as dpg
 
 try:
-    from webui.server import start_web_server
+    from webui.server import start_web_server, stop_web_server
 except ImportError:
     start_web_server = None
+    stop_web_server = None
 
 
 class SystemConfigMixin:
@@ -47,7 +48,14 @@ class SystemConfigMixin:
                 print('[Web控制面板] 未找到 web/server.py，无法启动Web服务。')
         else:
             # 禁用Web服务器
-            print('[Web控制面板] Web服务器已禁用')
+            if stop_web_server is not None:
+                try:
+                    if stop_web_server():
+                        print('[Web控制面板] Web服务器已停止')
+                except Exception as e:
+                    print(f'[Web控制面板] 停止Web服务器失败: {e}')
+            else:
+                print('[Web控制面板] Web服务器已禁用')
         self.save_config()
 
     def on_inference_device_change(self, sender, app_data):

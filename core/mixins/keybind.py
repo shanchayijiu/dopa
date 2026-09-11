@@ -109,6 +109,14 @@ class KeyBindMixin:
                 dpg.set_value(self.kalman_enabled_checkbox, bool(self.config.get('kalman', {}).get('enabled', True)))
             if self.kalman_predict_frames_slider is not None:
                 dpg.set_value(self.kalman_predict_frames_slider, int(self.config.get('kalman', {}).get('predict_frames', 5)))
+            if getattr(self, 'kalman_predict_gain_slider', None) is not None:
+                dpg.set_value(self.kalman_predict_gain_slider, float(self.config.get('kalman', {}).get('predict_gain', 3.0)))
+            if getattr(self, 'min_lead_speed_slider', None) is not None:
+                dpg.set_value(self.min_lead_speed_slider, float(key_cfg.get('min_lead_speed', 60.0)))
+            if getattr(self, 'max_lead_slider', None) is not None:
+                dpg.set_value(self.max_lead_slider, float(key_cfg.get('max_lead', 40.0)))
+            if getattr(self, 'lead_smooth_slider', None) is not None:
+                dpg.set_value(self.lead_smooth_slider, float(key_cfg.get('lead_smooth', 0.18)))
             dpg.set_value(self.target_switch_delay_slider, key_cfg.get('target_switch_delay', 0))
             reference_class = key_cfg.get('target_reference_class', 0)
             dpg.set_value(self.target_reference_class_combo, f'类别{reference_class}')

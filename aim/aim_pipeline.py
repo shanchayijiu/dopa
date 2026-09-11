@@ -275,6 +275,14 @@ class AimPipeline:
         self._vel_dir_count = 0  # 连续同向帧数
         self._prev_pid_raw = (0.0, 0.0)  # 上一帧原始 PID 输出（补偿观测速度用）
         self.predict_gain = 3.0  # PID输出→屏幕像素的估计系数
+        self.min_lead_speed = 60.0  # 目标速度超过该值才启用前馈 (px/s)
+        self.max_lead = 40.0  # 单帧最大前馈像素
+        # 自运动补偿：累计“自上一检测帧以来”我们实际施加的移动量
+        self._motion_accum_x = 0.0
+        self._motion_accum_y = 0.0
+        # 累计相机位移（用于把屏幕坐标还原到世界坐标）
+        self._cam_x = 0.0
+        self._cam_y = 0.0
         # 目标ID强锁定
         self.target_id_lock_enabled = True
         self._locked_track_id = None
@@ -305,6 +313,8 @@ class AimPipeline:
             self._est_vy = 0.0
             self._vel_dir_count = 0
             self._prev_pid_raw = (0.0, 0.0)
+            self._motion_accum_x = 0.0
+            self._motion_accum_y = 0.0
             self._cache['aim'].clear()
             self._cache['pid'].clear()
 
@@ -507,6 +517,23 @@ class AimPipeline:
             predict_gain = 3.0
         predict_gain = max(0.0, min(20.0, predict_gain))
 
+        # 移动前馈（lead）参数：按键级可调
+        try:
+            min_lead_speed = float(pressed_key_config.get('min_lead_speed', 60.0))
+        except Exception:
+            min_lead_speed = 60.0
+        min_lead_speed = max(0.0, min(2000.0, min_lead_speed))
+        try:
+            max_lead = float(pressed_key_config.get('max_lead', 40.0))
+        except Exception:
+            max_lead = 40.0
+        max_lead = max(0.0, min(400.0, max_lead))
+        try:
+            lead_smooth = float(pressed_key_config.get('lead_smooth', 0.18))
+        except Exception:
+            lead_smooth = 0.18
+        lead_smooth = max(0.0, min(1.0, lead_smooth))
+
         # 目标ID强锁定
         target_id_lock_enabled = bool(cfg.get('target_id_lock_enabled', True))
 
@@ -533,6 +560,9 @@ class AimPipeline:
             kalman_measurement_noise,
             predict_gain,
             target_id_lock_enabled,
+            min_lead_speed,
+            max_lead,
+            lead_smooth,
         )
         if c.get('key') != key:
             c['key'] = key
@@ -557,11 +587,17 @@ class AimPipeline:
             c['kalman_process_noise'] = kalman_process_noise
             c['kalman_measurement_noise'] = kalman_measurement_noise
             c['predict_gain'] = predict_gain
+            c['min_lead_speed'] = min_lead_speed
+            c['max_lead'] = max_lead
+            c['lead_smooth'] = lead_smooth
             c['target_id_lock_enabled'] = target_id_lock_enabled
             # 同步卡尔曼参数到预测器
             self.kalman_enabled = kalman_enabled
             self.kalman_predict_frames = kalman_predict_frames
             self.predict_gain = predict_gain
+            self.min_lead_speed = min_lead_speed
+            self.max_lead = max_lead
+            self._lead_smooth = lead_smooth
             if abs(self.kalman.process_noise - kalman_process_noise) > 1e-6 or \
                abs(self.kalman.measurement_noise - kalman_measurement_noise) > 1e-6:
                 self.kalman.process_noise = kalman_process_noise
@@ -1005,7 +1041,72 @@ class AimPipeline:
             targets = self.smooth_small_targets(targets, c)
             return self.select_target_by_priority(targets, aim_scope, center_xy, c)
 
-    def step_aim(self, aim_targets, class_ids, identify_left, identify_top, pressed_key_config, cfg, aim_scope, center_xy, model_area, auto_y=False, left_pressed_long=False):
+    def _reset_motion_prediction(self):
+        """目标切换/重置时清空速度估计、前馈量和 Kalman 轨迹状态。"""
+        self._prev_aim_pos = None
+        self._prev_aim_time = None
+        self._est_vx = 0.0
+        self._est_vy = 0.0
+        self._lead_x = 0.0
+        self._lead_y = 0.0
+        self._vel_dir_count = 0
+        self._prev_pid_raw = (0.0, 0.0)
+        self._motion_accum_x = 0.0
+        self._motion_accum_y = 0.0
+        self._cam_x = 0.0
+        self._cam_y = 0.0
+
+    def _update_motion_prediction(self, track_id, aim_x, aim_y, now):
+        """估计目标真实速度 (px/s)，写入 self._est_vx/_est_vy。
+
+        关键：把自身移动从屏幕坐标里补偿掉，得到"世界坐标"，再让 Kalman 在世界坐标上
+        滤波。旧做法是"屏幕速度 + 上一帧移动/dt"，其中 /dt 会把整数像素的量化抖动
+        放大成很大的速度抖动，导致准星附近抽搐。世界坐标法从根上避免这个问题。
+        没有 track_id 时退回屏幕位移 EMA。
+        """
+        acc_x, acc_y = self._motion_accum_x, self._motion_accum_y
+        self._motion_accum_x = 0.0
+        self._motion_accum_y = 0.0
+        self._cam_x += acc_x * self.predict_gain
+        self._cam_y += acc_y * self.predict_gain
+
+        dt = None
+        if self._prev_aim_time is not None:
+            dt = now - self._prev_aim_time
+            if not (0.001 < dt < 0.5):
+                dt = None
+
+        if track_id is not None:
+            try:
+                _, _, vx, vy = self.kalman.update(
+                    int(track_id), aim_x + self._cam_x, aim_y + self._cam_y
+                )
+            except Exception:
+                track_id = None
+            else:
+                max_vel = 2000.0
+                self._est_vx = max(-max_vel, min(max_vel, vx))
+                self._est_vy = max(-max_vel, min(max_vel, vy))
+                if self._est_vx != 0.0 or self._est_vy != 0.0:
+                    self._vel_dir_count = min(self._vel_dir_count + 1, 30)
+                return
+
+        if self._prev_aim_pos is None or dt is None:
+            return
+        raw_vx = (aim_x - self._prev_aim_pos[0]) / dt + acc_x * self.predict_gain / dt
+        raw_vy = (aim_y - self._prev_aim_pos[1]) / dt + acc_y * self.predict_gain / dt
+        max_vel = 2000.0
+        raw_vx = max(-max_vel, min(max_vel, raw_vx))
+        raw_vy = max(-max_vel, min(max_vel, raw_vy))
+        va = self._vel_smooth
+        self._est_vx = va * raw_vx + (1.0 - va) * self._est_vx
+        self._est_vy = va * raw_vy + (1.0 - va) * self._est_vy
+        if (raw_vx * self._est_vx + raw_vy * self._est_vy) > 0:
+            self._vel_dir_count = min(self._vel_dir_count + 1, 30)
+        else:
+            self._vel_dir_count = max(self._vel_dir_count - 2, 0)
+
+    def step_aim(self, aim_targets, class_ids, identify_left, identify_top, pressed_key_config, cfg, aim_scope, center_xy, model_area, auto_y=False, left_pressed_long=False, update_motion=True):
         with self._aim_lock:
             nearest = self.select_from_aim_targets(
                 aim_targets=aim_targets,
@@ -1029,58 +1130,31 @@ class AimPipeline:
                 self._lead_y = 0.0
                 self._vel_dir_count = 0
                 self._prev_pid_raw = (0.0, 0.0)
+                self._motion_accum_x = 0.0
+                self._motion_accum_y = 0.0
                 return None
             target_id = nearest.get('id')
             aim_x = float(nearest['pos'][0])
             aim_y = float(nearest['pos'][1])
 
-            # 目标切换时重置速度估计
+            # 目标切换时重置速度估计（含 Kalman 轨迹状态）
             if target_id != self._last_output_target_id and self._last_output_target_id is not None:
-                self._prev_aim_pos = None
-                self._prev_aim_time = None
-                self._est_vx = 0.0
-                self._est_vy = 0.0
-                self._lead_x = 0.0
-                self._lead_y = 0.0
-                self._vel_dir_count = 0
-                self._prev_pid_raw = (0.0, 0.0)
+                self._reset_motion_prediction()
 
-            # ---- 移动预测：PID输出补偿 + 预测位置喂给 PID ----
-            # 问题：PID 跟踪会抵消目标的屏幕速度，导致观测速度≈0
-            # 方案：用上一帧 PID 输出（=我们移动鼠标的量）补偿观测速度
-            #       true_vel ≈ obs_vel + prev_pid_output × predict_gain
-            now = time.time()
-            if self.kalman_enabled and self.kalman_predict_frames > 0:
-                if self._prev_aim_pos is not None and self._prev_aim_time is not None:
-                    dt = now - self._prev_aim_time
-                    if 0.001 < dt < 0.5:
-                        obs_dx = aim_x - self._prev_aim_pos[0]
-                        obs_dy = aim_y - self._prev_aim_pos[1]
-                        # 用 PID 输出补偿：屏幕移动了 prev_pid * gain 像素
-                        comp_dx = obs_dx + self._prev_pid_raw[0] * self.predict_gain
-                        comp_dy = obs_dy + self._prev_pid_raw[1] * self.predict_gain
-                        raw_vx = comp_dx / dt
-                        raw_vy = comp_dy / dt
-                        max_vel = 2000.0
-                        raw_vx = max(-max_vel, min(max_vel, raw_vx))
-                        raw_vy = max(-max_vel, min(max_vel, raw_vy))
-                        va = self._vel_smooth
-                        self._est_vx = va * raw_vx + (1.0 - va) * self._est_vx
-                        self._est_vy = va * raw_vy + (1.0 - va) * self._est_vy
-                        if (raw_vx * self._est_vx + raw_vy * self._est_vy) > 0:
-                            self._vel_dir_count = min(self._vel_dir_count + 1, 30)
-                        else:
-                            self._vel_dir_count = max(self._vel_dir_count - 2, 0)
-
+            # ---- 移动预测：Kalman 估计目标真实速度 → 前馈瞄准点 ----
+            # 仅在“新检测帧”重新估计速度/前馈，避免控制定时器高频重复同一帧
+            # 观测把 Kalman 速度拉向 0；前馈量本身则每个 tick 都应用。
+            if self.kalman_enabled and self.kalman_predict_frames > 0 and update_motion:
+                now = time.time()
+                self._update_motion_prediction(nearest.get('track_id'), aim_x, aim_y, now)
                 vel_mag = math.sqrt(self._est_vx * self._est_vx + self._est_vy * self._est_vy)
-                if vel_mag > 60.0 and self._vel_dir_count >= 3:
+                if vel_mag > self.min_lead_speed:
                     lead_time = float(self.kalman_predict_frames) * 0.008
                     raw_lx = self._est_vx * lead_time
                     raw_ly = self._est_vy * lead_time
                     lead_mag = math.sqrt(raw_lx * raw_lx + raw_ly * raw_ly)
-                    max_lead = 40.0
-                    if lead_mag > max_lead:
-                        s = max_lead / lead_mag
+                    if lead_mag > self.max_lead:
+                        s = self.max_lead / lead_mag
                         raw_lx *= s
                         raw_ly *= s
                     la = self._lead_smooth
@@ -1090,10 +1164,12 @@ class AimPipeline:
                     self._lead_x *= 0.5
                     self._lead_y *= 0.5
 
+                self._prev_aim_pos = (aim_x, aim_y)
+                self._prev_aim_time = now
+
+            if self.kalman_enabled and self.kalman_predict_frames > 0:
                 aim_x += self._lead_x
                 aim_y += self._lead_y
-                self._prev_aim_pos = (aim_x - self._lead_x, aim_y - self._lead_y)
-                self._prev_aim_time = now
 
             nearest['pos'] = (aim_x, aim_y)
             self._last_output_target_id = target_id
@@ -1111,7 +1187,8 @@ class AimPipeline:
                 return None
             frame_id, boxes, class_ids, input_w, input_h = normalized
 
-            if frame_id != self._last_frame_id:
+            is_new_frame = frame_id != self._last_frame_id
+            if is_new_frame:
                 self._last_frame_id = frame_id
                 self._frame_seq += 1
                 self._last_class_ids = class_ids
@@ -1132,6 +1209,7 @@ class AimPipeline:
                 model_area=model_area,
                 auto_y=auto_y,
                 left_pressed_long=left_pressed_long,
+                update_motion=is_new_frame,
             )
 
     def _compute_pid_move_locked(self, error_x, error_y, pressed_key_config, auto_y=False, left_pressed_long=False):
@@ -1161,7 +1239,11 @@ class AimPipeline:
             relative_move_y = 0
         move_threshold = float(pressed_key_config.get('move_deadzone', 1.0))
         if abs(relative_move_x) > move_threshold or abs(relative_move_y) > move_threshold:
-            return self.quantizer.quantize(relative_move_x, relative_move_y)
+            qx, qy = self.quantizer.quantize(relative_move_x, relative_move_y)
+            # 累计实际施加的屏幕位移，供下一检测帧的自运动补偿使用
+            self._motion_accum_x += qx
+            self._motion_accum_y += qy
+            return qx, qy
         # 移动被抑制时清理量化器残差，防止累积跳变
         self.quantizer.reset()
         return None

@@ -281,6 +281,10 @@ class Valorant(VerifyMixin, DeviceMixin, InputListenerMixin, InferenceMixin, Per
         self.large_target_boost_slider = None
         self.kalman_enabled_checkbox = None
         self.kalman_predict_frames_slider = None
+        self.kalman_predict_gain_slider = None
+        self.min_lead_speed_slider = None
+        self.max_lead_slider = None
+        self.lead_smooth_slider = None
         self.target_id_lock_checkbox = None
         self.class_aim_combo = None
         self.dynamic_scope_enabled_input = None

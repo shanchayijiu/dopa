@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="frisbeeg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff8a3c"/>
+      <stop offset="100%" stop-color="#c23a12"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="32" cy="34" rx="30" ry="24" fill="url(#frisbeeg)" stroke="#7a2109" stroke-width="2"/>
+  <ellipse cx="32" cy="30" rx="20" ry="15" fill="#ffd9c0" opacity="0.85"/>
+  <ellipse cx="32" cy="30" rx="10" ry="7" fill="#ff8a3c" opacity="0.9"/>
+</svg>

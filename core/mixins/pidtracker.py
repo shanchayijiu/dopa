@@ -95,6 +95,18 @@ class PidTrackerMixin:
         self.config['groups'][self.group]['aim_keys'][self.select_key]['tracker_track_buffer'] = int(app_data)
         self.refresh_controller_params()
 
+    def on_min_lead_speed_change(self, sender, app_data):
+        self.config['groups'][self.group]['aim_keys'][self.select_key]['min_lead_speed'] = round(float(app_data), 3)
+        self.refresh_controller_params()
+
+    def on_max_lead_change(self, sender, app_data):
+        self.config['groups'][self.group]['aim_keys'][self.select_key]['max_lead'] = round(float(app_data), 3)
+        self.refresh_controller_params()
+
+    def on_lead_smooth_change(self, sender, app_data):
+        self.config['groups'][self.group]['aim_keys'][self.select_key]['lead_smooth'] = round(float(app_data), 3)
+        self.refresh_controller_params()
+
     def on_target_id_lock_change(self, sender, app_data):
         self.config['target_id_lock_enabled'] = bool(app_data)
         if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
@@ -113,6 +125,13 @@ class PidTrackerMixin:
         if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
             self.aim_pipeline.kalman_predict_frames = v
         print(f'预测系数: {v}')
+
+    def on_kalman_predict_gain_change(self, sender, app_data):
+        v = max(0.0, min(20.0, float(app_data)))
+        self.config.setdefault('kalman', {})['predict_gain'] = v
+        if hasattr(self, 'aim_pipeline') and self.aim_pipeline is not None:
+            self.aim_pipeline.predict_gain = v
+        print(f'预测增益: {v}')
 
     def on_target_switch_delay_change(self, sender, app_data):
         self.config['groups'][self.group]['aim_keys'][self.select_key]['target_switch_delay'] = app_data

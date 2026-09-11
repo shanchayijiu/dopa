@@ -406,6 +406,11 @@ class GUIMixin:
                                 with dpg.group(horizontal=True):
                                     self.kalman_enabled_checkbox = dpg.add_checkbox(label='启用移动预测', default_value=bool(self.config.get('kalman', {}).get('enabled', True)), callback=self.on_kalman_enabled_change)
                                     self.kalman_predict_frames_slider = dpg.add_slider_int(label='预测系数', default_value=int(self.config.get('kalman', {}).get('predict_frames', 5)), min_value=0, max_value=20, callback=self.on_kalman_predict_frames_change, width=self.scaled_width_normal)
+                                    self.kalman_predict_gain_slider = dpg.add_slider_float(label='预测增益', default_value=float(self.config.get('kalman', {}).get('predict_gain', 3.0)), min_value=0.0, max_value=20.0, format='%.2f', callback=self.on_kalman_predict_gain_change, width=self.scaled_width_normal)
+                                with dpg.group(horizontal=True):
+                                    self.min_lead_speed_slider = dpg.add_slider_float(label='启用前馈速度', default_value=float(self.pressed_key_config.get('min_lead_speed', 60.0)), min_value=0.0, max_value=500.0, format='%.1f', callback=self.on_min_lead_speed_change, width=self.scaled_width_normal)
+                                    self.max_lead_slider = dpg.add_slider_float(label='最大前馈', default_value=float(self.pressed_key_config.get('max_lead', 40.0)), min_value=0.0, max_value=200.0, format='%.1f', callback=self.on_max_lead_change, width=self.scaled_width_normal)
+                                    self.lead_smooth_slider = dpg.add_slider_float(label='前馈平滑', default_value=float(self.pressed_key_config.get('lead_smooth', 0.18)), min_value=0.0, max_value=1.0, format='%.2f', callback=self.on_lead_smooth_change, width=self.scaled_width_normal)
                             crosshair_group = dpg.add_collapsing_header(label='准星找色', default_open=False)
                             with dpg.group(parent=crosshair_group):
                                 crosshair_cfg = self._get_crosshair_lock_config()

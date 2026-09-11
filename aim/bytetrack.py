@@ -44,6 +44,10 @@ class STrack:
         self._velocity = _ZERO_VEL  # 被 update/re_activate 时替换为新数组
         self._vel_alpha = 0.15  # EMA 平滑系数，越小越平滑
         self._center_cache = None  # 缓存 center 计算结果
+        # 上一次“真实检测”的中心。速度必须由两次检测的位移得出，
+        # 不能用 predict() 之后的预测中心去测残差（那会让匀速目标的速度
+        # 稳定收敛到真值的一半，见 bytetrack 回归测试）。
+        self._prev_det_center = None
 
     @staticmethod
     def reset_id():
@@ -86,17 +90,24 @@ class STrack:
         self.frame_id = frame_id
         self.start_frame = frame_id
         self.tracklet_len = 0
+        self._prev_det_center = self.center.copy()
 
     def re_activate(self, new_det, frame_id):
         """重新激活丢失的轨迹"""
-        old_center = self.center.copy()
+        old_center = self._prev_det_center
         self.bbox = new_det.bbox  # 直接引用检测 bbox（检测对象不再使用）
         self._center_cache = None
         self.score = new_det.score
         self.class_id = new_det.class_id
         new_center = self.center
-        # 丢失后重新激活，用新速度重置（不做EMA，因为旧速度已过时）
-        self._velocity = new_center - old_center
+        # 丢失后重新激活：用“上一真实检测中心 → 本次检测中心”的位移
+        # 重置速度（不做 EMA，因为旧速度已过时），并按丢失帧数归一化。
+        gap = max(1, int(frame_id) - int(self.frame_id))
+        if old_center is None:
+            self._velocity = _ZERO_VEL
+        else:
+            self._velocity = (new_center - old_center) / gap
+        self._prev_det_center = new_center
         self.state = self.State.TRACKED
         self.is_activated = True
         self.frame_id = frame_id
@@ -104,15 +115,21 @@ class STrack:
 
     def update(self, new_det, frame_id):
         """用新检测更新轨迹"""
-        old_center = self.center.copy()
+        old_det_center = self._prev_det_center
         self.bbox = new_det.bbox  # 直接引用检测 bbox（检测对象不再使用）
         self._center_cache = None
         self.score = new_det.score
         self.class_id = new_det.class_id
         new_center = self.center
-        raw_vel = new_center - old_center
+        gap = max(1, int(frame_id) - int(self.frame_id))
+        if old_det_center is None:
+            raw_vel = _ZERO_VEL
+        else:
+            # 真实位移 / 帧间隔，得到像素/帧速度
+            raw_vel = (new_center - old_det_center) / gap
         # EMA 平滑速度，减少检测抖动导致的预测偏移
         self._velocity = self._vel_alpha * raw_vel + (1.0 - self._vel_alpha) * self._velocity
+        self._prev_det_center = new_center
         self.state = self.State.TRACKED
         self.is_activated = True
         self.frame_id = frame_id

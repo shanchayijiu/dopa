@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DOPA 合成靶场</title>
+  <link rel="stylesheet" href="/static/range.css" />
+</head>
+<body>
+  <canvas id="stage"></canvas>
+
+  <div id="hud">
+    <div>靶场 <span id="status">连接中...</span></div>
+    <div>FPS: <span id="fps">0</span> · 目标: <span id="n">0</span></div>
+    <div>命中/点击: <span id="hits">0</span>/<span id="clicks">0</span></div>
+    <div>DPR: <span id="dpr">-</span> · 视口: <span id="vp">-</span></div>
+  </div>
+
+  <div id="panel">
+    <h3>靶场控制</h3>
+    <div class="row">
+      <span>模式</span>
+      <span>
+        <button data-mode="bounce" class="mode active">反弹</button>
+        <button data-mode="brownian" class="mode">布朗</button>
+        <button data-mode="teleport" class="mode">传送</button>
+      </span>
+    </div>
+    <div class="row"><span>目标数</span><input id="count" type="range" min="1" max="6" step="1" value="1" /><span id="countv">1</span></div>
+    <div class="row"><span>速度</span><input id="speed" type="range" min="40" max="800" step="10" value="220" /><span id="speedv">220</span></div>
+    <div class="row"><span>灵敏度</span><input id="sens" type="range" min="0.2" max="4" step="0.1" value="1" /><span id="sensv">1.0</span></div>
+  </div>
+
+  <div id="lockhint">
+    <div>点击进入靶场（锁定鼠标）</div>
+    <small>按 Esc 释放鼠标 · F 切换全屏</small>
+  </div>
+
+  <script src="/static/range.js"></script>
+</body>
+</html>

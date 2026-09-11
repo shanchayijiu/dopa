@@ -1,0 +1,96 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #0b0e13;
+  color: #dfe6f0;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  user-select: none;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+
+#hud {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  background: rgba(10, 14, 20, 0.72);
+  border: 1px solid #2a3546;
+  border-radius: 8px;
+  padding: 8px 10px;
+  pointer-events: none;
+  z-index: 5;
+}
+
+#panel {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  width: 220px;
+  font-size: 12px;
+  background: rgba(10, 14, 20, 0.86);
+  border: 1px solid #2a3546;
+  border-radius: 8px;
+  padding: 10px;
+  z-index: 6;
+}
+
+#panel h3 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+}
+
+#panel .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 5px 0;
+  gap: 6px;
+}
+
+#panel button {
+  background: #1c2636;
+  color: #dfe6f0;
+  border: 1px solid #33435c;
+  border-radius: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+#panel button.active {
+  background: #2f6fed;
+  border-color: #2f6fed;
+}
+
+#panel input[type="range"] {
+  width: 110px;
+}
+
+#lockhint {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 22px;
+  background: rgba(4, 6, 10, 0.55);
+  z-index: 10;
+  cursor: pointer;
+}
+
+#lockhint.hidden {
+  display: none;
+}
+
+#lockhint small {
+  font-size: 14px;
+  color: #9fb0c7;
+}
