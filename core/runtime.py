@@ -18,7 +18,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DLL_DIR = os.path.join(PROJECT_ROOT, 'dll')
 _DLL_DIRECTORY_HANDLES = []
 
-VERSION = 'v2.1.5'
+VERSION = 'v2.5'
 UPDATE_TIME = '2025-11-04'
 
 BAR_HEIGHT = 2

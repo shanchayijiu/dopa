@@ -1,11 +1,11 @@
-# DOPA3 — AI 辅助瞄准系统
+# naoma — AI 辅助瞄准系统
 
 ## 项目概述
 
-DOPA3 是一款基于深度学习目标检测的 AI 辅助瞄准系统，主要面向 FPS 游戏场景（如 CS2、Valorant 等）。系统通过屏幕截图实时捕获画面，使用 YOLO 系列模型（支持 v5/v8/v11、ONNX/TensorRT）进行目标检测，配合 ByteTrack 多目标跟踪、卡尔曼滤波预测、PID 控制器等算法，实现精确的目标定位与鼠标移动控制。
+naoma 是一款基于深度学习目标检测的 AI 辅助瞄准系统，主要面向 FPS 游戏场景（如 CS2、Valorant 等）。系统通过屏幕截图实时捕获画面，使用 YOLO 系列模型（支持 v5/v8/v11、ONNX/TensorRT）进行目标检测，配合 ByteTrack 多目标跟踪、卡尔曼滤波预测、PID 控制器等算法，实现精确的目标定位与鼠标移动控制。
 
-**版本**：v2.1.5  
-**更新日期**：2025-11-04  
+**版本**：v2.5  
+**更新日期**：2026-09-11  
 **开发团队**：HuiyeStudio
 
 ---
@@ -65,7 +65,7 @@ python main.py
 ## 项目结构
 
 ```
-dopa3-1/
+naoma/
 ├── main.py                      # 程序入口，异常处理、TensorRT 容错
 ├── conftest.py                  # 测试路径引导（使 pytest 可从任意目录调用）
 │
@@ -107,6 +107,21 @@ dopa3-1/
 │   └── profiler.py              #   帧性能分析
 ├── cat/                         # CatBox 底层协议
 │   └── catnet_lite.py           #   CatNetLite 虚拟模块
+├── sim/                         # 单机合成靶场（测试/调参，独立于主程序）
+│   ├── virtual_game.py          #   虚拟游戏：小窗口渲染 + 相机 + 虚拟鼠标后端
+│   ├── motion.py                #   目标运动模型（bounce/brownian/teleport/blink/orbit）
+│   ├── range_server.py          #   网页靶场服务（WS + overlay + 真值日志）
+│   ├── launch_range.py          #   起服务并全屏打开靶场页面
+│   ├── replay.py / metrics.py   #   闭环回放与锁定质量指标
+│   ├── analyze.py               #   真值 vs 检测离线比对
+│   ├── make_320_model.py        #   由 640 现成权重生成 320 YOLOv8n ONNX
+│   └── static/                  #   靶场网页（HTML/JS/CSS + 球精灵）
+├── tools/                       # 调试/调参脚本
+│   ├── lock_quality.py          #   锁定质量量化（mean/std/振荡/命中）
+│   ├── target_switch_test.py    #   多目标切换统计
+│   ├── track_speed_sweep.py     #   速度扫描
+│   ├── blink_lock_test.py       #   瞬移重锁测试
+│   └── real_track_demo.py       #   真模型闭环演示（出视频）
 │
 ├── cfg.json                     # 运行时配置（程序会写回）
 ├── config.json                  # 卡密配置
@@ -117,12 +132,45 @@ dopa3-1/
 ├── requirements.txt             # 依赖清单
 ├── run.bat                      # 启动脚本
 ├── assets/                      # 界面字体、图片
-├── dll/  models/                # 驱动与模型文件
-├── tests/                       # 单元测试（31 项）
+├── dll/  models/                # 驱动与模型文件（含 yolov8n_320.onnx 球模型）
+├── tests/                       # 单元测试（73 项）
 └── docs/                        # 架构 / 流程 / 模块 / 安装文档
 ```
 
 完整按模块分组与整理规划见 [PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)。
+
+---
+
+## 移动靶追踪与调参
+
+追踪链路：`截图 → YOLO → NMS → ByteTrack → 目标选择 → Kalman 前馈 → PID → 量化 → 鼠标移动`。
+静止目标靠 PID 即可；**移动目标靠 Kalman 前馈（提前量）**。
+
+主要参数（GUI：`PID控制器参数` 页）：
+
+- **目标跟踪 (ByteTrack)**：`启用跟踪器`（必须开，否则目标 id 每次变动、锁定失效）、`IoU匹配阈值`、`丢失保留帧数`
+- **移动预测**：`启用移动预测`、`预测系数`（提前量≈帧数×8ms）、`预测增益`（1 鼠标计数=多少像素，需按灵敏度标定）、`启用前馈速度`、`最大前馈`、`前馈平滑`
+- **目标选择器**（抑制多目标频繁切换）：`目标黏性`、`锁定时间`、`目标ID强锁定`、`目标转移延迟`
+
+### 单机靶场（不依赖真实游戏）
+
+```bash
+# 起网页靶场（全屏，小窗口可缩放）
+python -m sim.launch_range --size 320 --mode bounce --count 1
+# 或跑原生 app + 虚拟游戏（不动真实鼠标）：见 tools/run_virtual_test.py
+```
+
+### 调参与验证
+
+```bash
+python -m pytest tests -q                                   # 回归
+python tools/lock_quality.py --motion orbit --speed 300     # 锁定质量(mean/std/命中)
+python tools/target_switch_test.py --count 3 --speed 180    # 多目标切换次数
+python tools/track_speed_sweep.py --speeds 150,300,450,600  # 速度扫描
+python tools/blink_lock_test.py --blink-interval 2.5        # 瞬移重锁
+```
+
+> 双机链路（A 机推流 → B 机 OBS/采集卡接收 + 盒子控鼠标）不受靶场影响，靶场仅用于单机调试。
 
 ---
 
